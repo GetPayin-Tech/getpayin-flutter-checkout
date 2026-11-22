@@ -4,31 +4,27 @@
 import 'package:flutter/material.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
 
-/// The scheme this app answers to, declared in both native projects.
+/// The scheme this app answers to, declared in `AndroidManifest.xml` and `Info.plist`.
 const String appScheme = 'myapp';
 
 /// The link the checkout sends the payer back to.
 const String returnUrl = '$appScheme://payment-return';
 
+/// Declares every scheme this app answers to, before anything can be paid for.
+///
+/// The checkout refuses all of them, so a page inside it cannot reach the app's own
+/// deep-link routes.
 void main() {
   declareHostAppSchemes(const <String>[appScheme]);
   runApp(const ExampleApp());
 }
 
-/// What your server returns when it creates a payment.
-typedef Payment = ({String checkoutUrl, String invoiceId});
-
-/// Asks your server to create the payment.
+/// A harness for the checks that only a phone can make.
 ///
-/// Your server calls `POST /api/integration/init` with your hash token and returns the
-/// `checkout_url` and `invoice_id` it got back. The token never comes near the app.
-Future<Payment> createPayment() async {
-  throw UnimplementedError(
-    'Point createPayment at your own server, which calls POST /api/integration/init.',
-  );
-}
-
-/// The example app.
+/// There is no server here on purpose. Paste a `checkout_url` that your own server, or the
+/// GetPayIn dashboard, has already created and this opens it exactly as an integration
+/// would: same provider, same options, same reading of the result. It is what
+/// `CONTRIBUTING.md` asks you to run before a release.
 class ExampleApp extends StatelessWidget {
   /// Creates the example app.
   const ExampleApp({super.key});
@@ -36,13 +32,14 @@ class ExampleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'GetPayIn checkout example',
+      title: 'GetPayIn checkout',
+      theme: ThemeData(colorSchemeSeed: const Color(0xFF0570DE)),
       home: GetPayInProvider(child: const CheckoutPage()),
     );
   }
 }
 
-/// A page with one Pay button.
+/// The one screen: a checkout URL, how to open it, and what came back.
 class CheckoutPage extends StatefulWidget {
   /// Creates the page.
   const CheckoutPage({super.key});
@@ -52,90 +49,133 @@ class CheckoutPage extends StatefulWidget {
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
-  /// Draw the checkout in the app's own screen on Android.
+  final TextEditingController _checkoutUrl = TextEditingController();
+
+  bool _googlePayInApp = false;
+  bool _busy = false;
+  CheckoutResult? _result;
+  String? _failure;
+
+  @override
+  void dispose() {
+    _checkoutUrl.dispose();
+    super.dispose();
+  }
+
+  /// Opens the pasted checkout and keeps whatever it answers.
   ///
-  /// Off until Google has approved the app, because before that an Android payer gets an
-  /// app screen with no Google Pay button and no error saying why.
-  static const bool _googlePayInApp = false;
-
-  String _status = 'Ready';
-  bool _paying = false;
-
+  /// The invoice id is read off the URL rather than asked for separately, so the result is
+  /// still bound to this checkout and a link naming another invoice is refused.
   Future<void> _pay() async {
+    final url = _checkoutUrl.text.trim();
+
     setState(() {
-      _paying = true;
-      _status = 'Creating the payment…';
+      _busy = true;
+      _result = null;
+      _failure = null;
     });
 
     try {
-      final payment = await createPayment();
-
       final result = await GetPayInCheckout.open(
-        payment.checkoutUrl,
+        url,
         OpenCheckoutOptions(
           returnUrl: returnUrl,
-          expectedInvoiceId: payment.invoiceId,
+          expectedInvoiceId: invoiceIdInCheckoutUrl(url),
           googlePayInApp: _googlePayInApp,
           title: 'Pay for your order',
         ),
       );
 
-      _report(result);
-    } on GetPayInSessionBusyError {
-      return;
-    } catch (error) {
-      _show('$error');
+      setState(() => _result = result);
+    } on GetPayInCheckoutError catch (error) {
+      setState(() => _failure = error.message);
     } finally {
       if (mounted) {
-        setState(() => _paying = false);
+        setState(() => _busy = false);
       }
     }
   }
 
-  /// Shows what came back, and confirms a paid result on the server.
-  ///
-  /// The result is a report of what the return link said, never proof of payment: only the
-  /// `invoice.paid` webhook on your server may unlock, ship or credit anything.
-  void _report(CheckoutResult result) {
-    switch (result.status) {
-      case CheckoutStatus.paid:
-        _show(
-            'Paid. Confirm invoice ${result.invoiceId} on your server before delivering.');
-      case CheckoutStatus.notPaid:
-        _show(result.message ?? 'The payment did not go through.');
-      case CheckoutStatus.cancelled:
-        _show('The payer closed the checkout.');
-    }
-  }
-
-  void _show(String status) {
-    if (mounted) {
-      setState(() => _status = status);
-    }
-  }
+  /// Where this build would draw the checkout, which is the first thing to check on a phone.
+  String get _presentation => GetPayInCheckout.presentationFor(
+        googlePayInApp: _googlePayInApp,
+      ).wireName;
 
   @override
   Widget build(BuildContext context) {
+    final result = _result;
+    final failure = _failure;
+
     return Scaffold(
       appBar: AppBar(title: const Text('GetPayIn checkout')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: <Widget>[
+          TextField(
+            controller: _checkoutUrl,
+            minLines: 2,
+            maxLines: 4,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'checkout_url',
+              helperText: 'From your server, or the GetPayIn dashboard.',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          SwitchListTile(
+            value: _googlePayInApp,
+            onChanged: (value) => setState(() => _googlePayInApp = value),
+            title: const Text('googlePayInApp'),
+            subtitle: const Text(
+              'On Android, draw it in the app\'s own screen. Ignored on iOS.',
+            ),
+          ),
+          Text('This build would open it: $_presentation'),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _checkoutUrl.text.trim().isEmpty || _busy ? null : _pay,
+            child: Text(_busy ? 'Waiting for the payer…' : 'Open the checkout'),
+          ),
+          const SizedBox(height: 24),
+          if (failure != null)
+            _Outcome(title: 'It would not open', lines: <String>[failure]),
+          if (result != null)
+            _Outcome(
+              title: result.status.wireName,
+              lines: <String>[
+                if (result.invoiceId != null) 'invoice ${result.invoiceId}',
+                if (result.invoiceStatus != null)
+                  'status ${result.invoiceStatus}',
+                if (result.code != null) 'code ${result.code!.wireName}',
+                if (result.message != null) result.message!,
+                'Confirm the invoice.paid webhook before you deliver anything.',
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// What came back, as plainly as it can be put.
+class _Outcome extends StatelessWidget {
+  const _Outcome({required this.title, required this.lines});
+
+  final String title;
+  final List<String> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(_status, textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: _paying ? null : _pay,
-              child: const Text('Pay'),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'This build would open the checkout in: '
-              '${GetPayInCheckout.presentationFor().wireName}',
-              style: Theme.of(context).textTheme.bodySmall,
-              textAlign: TextAlign.center,
-            ),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            for (final line in lines) Text(line),
           ],
         ),
       ),

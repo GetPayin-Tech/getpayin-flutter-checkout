@@ -8,3 +8,10 @@ pubspec.lock
 *.iml
 .idea/
 .vscode/
+
+# The example's generated platform project is scaffolded, not authored. Its manifest is
+# the exception: it carries the scheme and the payment queries the package needs.
+example/android/.gradle/
+example/android/local.properties
+example/android/app/src/main/java/
+example/.gradle/
