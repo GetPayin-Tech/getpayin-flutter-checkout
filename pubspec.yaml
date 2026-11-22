@@ -39,3 +39,9 @@ dev_dependencies:
   # platform interface webview_flutter talks to.
   webview_flutter_platform_interface: ^2.13.0
   url_launcher_platform_interface: ^2.3.0
+
+# The sheet draws Material icons, whose code points sit in the private use area. Without
+# this the icon font is not bundled and every one of them renders as whatever the system
+# falls back to, which on Android is a CJK glyph.
+flutter:
+  uses-material-design: true
