@@ -1,7 +1,10 @@
 # getpayin_flutter_checkout
 
-Take Apple Pay, Google Pay and card payments in your Flutter app. The hosted GetPayIn
-checkout opens inside your app, under your app's own top bar, with no browser bar.
+Take Apple Pay, Google Pay and card payments in your Flutter app.
+
+The GetPayIn checkout opens inside your app, under your app's own top bar, with no browser
+bar — or, if you would rather it looked like part of the app, as a payment sheet you draw
+yourself.
 
 | Phone                                    | Where the checkout opens  | Payment methods  |
 | ---------------------------------------- | ------------------------- | ---------------- |
