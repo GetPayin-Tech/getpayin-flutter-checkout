@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
-import 'package:getpayin_flutter_checkout/src/core/session_guard.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/core/session_guard.dart';
 
 void main() {
   group('SessionGuard', () {

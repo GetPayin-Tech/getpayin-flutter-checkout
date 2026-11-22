@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/browser_session.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/deep_link.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/watcher.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/sessions/browser_session.dart';
+import 'package:getpayin_checkout/src/sessions/deep_link.dart';
+import 'package:getpayin_checkout/src/sessions/watcher.dart';
 
 /// Lets the event loop run, for a rule whose ordering is the thing under test.
 Future<void> flush() async {

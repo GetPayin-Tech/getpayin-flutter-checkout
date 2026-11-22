@@ -1,4 +1,4 @@
-# getpayin_flutter_checkout
+# getpayin_checkout
 
 Take Apple Pay, Google Pay and card payments in your Flutter app.
 
@@ -20,7 +20,7 @@ it. The app shows the checkout and reports what came back.
 ## Install
 
 ```bash
-flutter pub add getpayin_flutter_checkout
+flutter pub add getpayin_checkout
 ```
 
 Then rebuild. The web view is native code, so a hot reload will not pick it up.
@@ -36,7 +36,7 @@ Declare the schemes your app answers to, and mount the provider once.
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
 
 void main() {
   // The checkout refuses every scheme listed here, so a page inside it cannot reach your

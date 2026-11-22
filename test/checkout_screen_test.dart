@@ -5,8 +5,8 @@ import 'dart:async';
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/deep_link.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/sessions/deep_link.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'support/fake_launcher.dart';

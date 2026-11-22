@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/browser_session.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/registry.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/sessions/browser_session.dart';
+import 'package:getpayin_checkout/src/sessions/registry.dart';
 
 import 'support/fakes.dart';
 import 'support/fixtures.dart';

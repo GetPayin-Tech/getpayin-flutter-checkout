@@ -8,6 +8,17 @@ All notable changes to this package are documented here. The format follows
 
 ### Added
 
+- `GetPayInPaymentSheet`: the same payment taken on a sheet in your own app, with a wallet
+  button, the payer's saved cards, a card form and one pay button, running on PayLink's
+  hosted card fields. The card number and security code are still rendered by the gateway,
+  on a page you host at your registered origin; everything around them is Flutter. See
+  [The payment sheet](doc/payment-sheet.md).
+- `PayLinkFieldsSession`, `FieldsFailure`, `CardFieldsController`, `WalletSurface`,
+  `buildFieldsPageHtml` and the `FieldsEvent` family, so a different sheet can be built from
+  the same pieces.
+- `CheckoutResultCode.checkoutUnavailable`, for a sheet that could not be shown at all with
+  the fallback to the hosted checkout turned off. Nothing was charged and nothing was
+  declined.
 - `GetPayInCheckout.saveCard`: vault a card through a hosted tokenization run, read as a
   card save rather than as a payment. A verification authorizes one unit, vaults the card
   and releases the hold, so its invoice ends `VOIDED` and the payment rules would have
@@ -20,23 +31,15 @@ All notable changes to this package are documented here. The format follows
 - `readReturnClaim`, the reading of a return link before any rule about what it may mean,
   which is what lets a card save and a payment share one parser.
 
-- `GetPayInPaymentSheet`: the same payment taken on a sheet in your own app — wallet button,
-  saved cards, card form, one pay button — running on PayLink's hosted card fields. The card
-  number and security code are still rendered by the gateway, on a page you host at your
-  registered origin; everything around them is Flutter. See
-  [The payment sheet](doc/payment-sheet.md).
-- `PayLinkFieldsSession`, `FieldsFailure`, `CardFieldsController`, `WalletSurface`,
-  `buildFieldsPageHtml` and the `FieldsEvent` family, so a different sheet can be built from
-  the same pieces.
-- `CheckoutResultCode.checkoutUnavailable`, for a sheet that could not be shown at all with
-  the fallback to the hosted checkout turned off. Nothing was charged and nothing was
-  declined.
-
 ### Changed
 
+- The package is `getpayin_checkout`, so an app writes
+  `import 'package:getpayin_checkout/getpayin_checkout.dart';`. It was
+  `getpayin_flutter_checkout`, which said "Flutter" to an audience already writing Dart.
+  Nothing else moved: the repository, the API and the behaviour are unchanged.
 - The "no scripts" rule is now written against surfaces that can show a wallet rather than
-  against the checkout view, which is what it always meant: the wallet surface and the hosted
-  checkout are never scripted, and the sheet's card box is, deliberately.
+  against the checkout view, which is what it always meant: the wallet surface and the
+  hosted checkout are never scripted, and the sheet's card box is, deliberately.
 
 ## 0.1.0
 

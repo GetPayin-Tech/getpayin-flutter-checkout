@@ -2,7 +2,7 @@
 // older versions this package still supports.
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
 
 /// The scheme this app answers to, declared in both native projects.
 const String appScheme = 'myapp';

@@ -1,4 +1,4 @@
-name: getpayin_flutter_checkout
+name: getpayin_checkout
 description: >-
   Take Apple Pay, Google Pay and card payments in your Flutter app with GetPayIn.
   Use the hosted checkout, or a payment sheet of your own.

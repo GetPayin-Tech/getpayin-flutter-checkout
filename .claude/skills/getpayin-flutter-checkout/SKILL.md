@@ -1,11 +1,11 @@
 ---
 name: getpayin-flutter-checkout
-description: Take GetPayIn payments in a Flutter app with getpayin_flutter_checkout — Apple Pay, Google Pay and card, either on the hosted checkout or on a payment sheet built from PayLink's hosted card fields. Use when adding or debugging in-app payments in Flutter, when the user mentions GetPayIn, PayLink, Apple Pay or Google Pay in Flutter, a payment WebView, a payment return deep link, GetPayInProvider, GetPayInCheckout.open, GetPayInPaymentSheet, hosted card fields, PayLinkFieldsSession, or symptoms such as a missing wallet button, HTTP 403 from a checkout link, an unmatched route after paying, or an app that never receives the payment result.
+description: Take GetPayIn payments in a Flutter app with getpayin_checkout — Apple Pay, Google Pay and card, either on the hosted checkout or on a payment sheet built from PayLink's hosted card fields. Use when adding or debugging in-app payments in Flutter, when the user mentions GetPayIn, PayLink, Apple Pay or Google Pay in Flutter, a payment WebView, a payment return deep link, GetPayInProvider, GetPayInCheckout.open, GetPayInPaymentSheet, hosted card fields, PayLinkFieldsSession, or symptoms such as a missing wallet button, HTTP 403 from a checkout link, an unmatched route after paying, or an app that never receives the payment result.
 ---
 
 # GetPayIn checkout in Flutter
 
-`getpayin_flutter_checkout` takes a GetPayIn payment inside a Flutter app and reports what
+`getpayin_checkout` takes a GetPayIn payment inside a Flutter app and reports what
 came back. It holds no secret and signs nothing.
 
 ## The rule that matters most
@@ -91,7 +91,7 @@ there — `dart run tool/write_fields_page.dart https://pay.getpayin.com` writes
 
 When integrating:
 
-1. **Install and rebuild.** `flutter pub add getpayin_flutter_checkout`, then a full
+1. **Install and rebuild.** `flutter pub add getpayin_checkout`, then a full
    rebuild. The web view is native code, so a hot reload is not enough.
 2. **Declare the scheme natively, in both projects.** Flutter has no `app.json`: an
    `<intent-filter>` with `<data android:scheme="myapp" />` in `AndroidManifest.xml`, and

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/src/core/text.dart';
+import 'package:getpayin_checkout/src/core/text.dart';
 
 void main() {
   group('fallbackText', () {

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping with `getpayin_flutter_checkout`.
+Thanks for helping with `getpayin_checkout`.
 
 ## Getting set up
 

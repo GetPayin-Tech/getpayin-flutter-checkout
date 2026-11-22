@@ -1,4 +1,4 @@
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
 
 /// The return link every test opens a checkout with.
 const String testReturnUrl = 'myapp://payment-return';

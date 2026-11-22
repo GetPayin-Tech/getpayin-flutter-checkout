@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
-import 'package:getpayin_flutter_checkout/src/core/validate.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/core/validate.dart';
 
 import 'support/fixtures.dart';
 

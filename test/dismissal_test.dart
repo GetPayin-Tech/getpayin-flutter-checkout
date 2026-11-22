@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/dismissal.dart';
+import 'package:getpayin_checkout/src/sessions/dismissal.dart';
 
 void main() {
   group('SheetDismissalDetector', () {

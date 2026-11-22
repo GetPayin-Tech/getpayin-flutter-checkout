@@ -1,9 +1,9 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/getpayin_flutter_checkout.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/browser_session.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/deep_link.dart';
-import 'package:getpayin_flutter_checkout/src/webview/external_link.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/sessions/browser_session.dart';
+import 'package:getpayin_checkout/src/sessions/deep_link.dart';
+import 'package:getpayin_checkout/src/webview/external_link.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
 import 'support/fake_launcher.dart';

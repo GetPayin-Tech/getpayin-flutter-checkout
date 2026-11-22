@@ -1,9 +1,9 @@
 ---
 name: getpayin-flutter-checkout-dev
-description: Work on the getpayin_flutter_checkout package itself — its layering rules, the settings that fail silently on a phone, the invariants only review catches, and the verify loop. Use when editing, reviewing or testing files under lib/src/core, lib/src/webview, lib/src/sessions, lib/src/sheet or lib/src/widgets in the getpayin-flutter-checkout repository, when adding an export or option to it, or when a change touches the return-link reader, the presentation rule, the navigation classifier, the deep-link watcher, the payment sheet or the hosted-fields bridge.
+description: Work on the getpayin_checkout package itself — its layering rules, the settings that fail silently on a phone, the invariants only review catches, and the verify loop. Use when editing, reviewing or testing files under lib/src/core, lib/src/webview, lib/src/sessions, lib/src/sheet or lib/src/widgets in the getpayin-flutter-checkout repository, when adding an export or option to it, or when a change touches the return-link reader, the presentation rule, the navigation classifier, the deep-link watcher, the payment sheet or the hosted-fields bridge.
 ---
 
-# Working on getpayin_flutter_checkout
+# Working on getpayin_checkout
 
 The maintainer's skill for the package itself. For integrating it into an app, use
 `getpayin-flutter-checkout` instead.
@@ -136,7 +136,7 @@ exempt, both a plugin's own constructor: `DeepLinkSource.platform` and the pair 
 1. Add the type with a doc comment.
 2. Thread it through `core/return_url.dart` if it affects what a payment claim means, so
    every presentation gets it.
-3. Export it from `lib/getpayin_flutter_checkout.dart`.
+3. Export it from `lib/getpayin_checkout.dart`.
 4. Add it to `doc/api.md`. The reference is expected to be complete.
 5. Note it in `CHANGELOG.md`.
 

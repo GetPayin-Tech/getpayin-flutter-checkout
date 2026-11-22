@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/src/core/url.dart';
+import 'package:getpayin_checkout/src/core/url.dart';
 
 void main() {
   group('parseUrl', () {

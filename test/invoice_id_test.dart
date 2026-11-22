@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/src/core/invoice_id.dart';
+import 'package:getpayin_checkout/src/core/invoice_id.dart';
 
 /// One id and what it reduces to, so each case is one line instead of two lists.
 typedef IdCase = ({String label, Object value, String expected});

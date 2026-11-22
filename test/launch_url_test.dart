@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/src/sessions/deep_link.dart';
+import 'package:getpayin_checkout/src/sessions/deep_link.dart';
 
 import 'support/fakes.dart';
 import 'support/fixtures.dart';

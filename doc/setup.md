@@ -16,7 +16,7 @@ depend on.
 ## Install
 
 ```bash
-flutter pub add getpayin_flutter_checkout
+flutter pub add getpayin_checkout
 ```
 
 That brings in `webview_flutter` for the in-app screen, `url_launcher` for the browser

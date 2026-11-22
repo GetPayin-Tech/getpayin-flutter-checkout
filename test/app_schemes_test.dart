@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:getpayin_flutter_checkout/src/webview/app_schemes.dart';
+import 'package:getpayin_checkout/src/webview/app_schemes.dart';
 
 void main() {
   tearDown(() => declareHostAppSchemes(const <String>[]));

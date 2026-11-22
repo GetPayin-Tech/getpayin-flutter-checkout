@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:getpayin_flutter_checkout/src/sheet/fields_page.dart';
+import 'package:getpayin_checkout/src/sheet/fields_page.dart';
 
 /// Writes the card fields page this package expects you to host.
 ///
