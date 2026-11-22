@@ -178,11 +178,13 @@ See [The payment sheet](payment-sheet.md), which covers what it needs before it 
 | `session`                  | `PayLinkFieldsSession`                            | required   | The payment, from your server's `/init` with `mode: "fields"`.                             |
 | `fieldsPageUrl`            | `String`                                          | required   | The page you host at the integration's registered origin.                                  |
 | `returnUrl`                | `String`                                          | required   | The link a wallet charge comes back to, and the one the hosted fallback uses.              |
+| `fieldsPageHeaders`        | `Map<String, String>`                             | `{}`       | Headers the page is asked for with, for an origin that will not serve it without.          |
 | `expectedInvoiceId`        | `Object?`                                         | `null`     | The invoice this payment is for, so a charge booked against another is refused.            |
 | `amountLabel`              | `String?`                                         | `null`     | What the pay button says until the gateway has priced the payment.                         |
 | `wallets`                  | `List<PaymentWallet>`                             | `[]`       | The wallets to offer. One is shown: the one that belongs on this platform.                 |
 | `savedCards`               | `List<SavedCard>`                                 | `[]`       | The payer's vaulted cards, from your own backend.                                          |
 | `chargeSavedCard`          | `Future<CheckoutResult> Function(SavedCard)?`     | `null`     | Charges a vaulted card. Your server's call, since it is signed with your hash token.       |
+| `ownSchemes`               | `List<String>`                                    | `[]`       | Extra schemes the wallet surface should refuse, on top of `declareHostAppSchemes`.         |
 | `style`                    | `PaymentSheetStyle`                               | Stripe-ish | How the sheet is drawn, on both sides of the card box.                                     |
 | `strings`                  | `PaymentSheetStrings`                             | English    | Every word the sheet says.                                                                 |
 | `fallBackToHostedCheckout` | `bool`                                            | `true`     | Send the payer to `checkout_url` when the fields cannot take this payment.                 |

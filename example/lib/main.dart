@@ -20,6 +20,15 @@ const String returnUrl = '$appScheme://payment-return';
 /// a `checkout_url` exactly as a real app asks its backend.
 const String defaultPaymentsServer = 'http://192.168.1.6:8788';
 
+/// Headers the fields page is asked for with while it is served through a dev tunnel.
+///
+/// ngrok's free tier answers an ordinary request with its own interstitial, which a web
+/// view shows where the card fields should be; this header asks it for the page instead. An
+/// origin that has never heard of the header ignores it, so the harness always sends it.
+const Map<String, String> fieldsPageHeaders = <String, String>{
+  'ngrok-skip-browser-warning': 'true',
+};
+
 /// Declares every scheme this app answers to, before anything can be paid for.
 ///
 /// The checkout refuses all of them, so a page inside it cannot reach the app's own
@@ -123,6 +132,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       PaymentSheetConfiguration(
         session: session,
         fieldsPageUrl: _fieldsPage.text.trim(),
+        fieldsPageHeaders: fieldsPageHeaders,
         returnUrl: returnUrl,
         expectedInvoiceId: session.invoiceId,
         amountLabel:

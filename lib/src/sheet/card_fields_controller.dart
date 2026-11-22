@@ -23,6 +23,7 @@ class CardFieldsController extends ChangeNotifier {
   CardFieldsController({
     required this.session,
     required this.pageUrl,
+    this.pageHeaders = const <String, String>{},
     this.style = const PaymentSheetStyle(),
     this.onPayment,
     this.onFailure,
@@ -35,6 +36,12 @@ class CardFieldsController extends ChangeNotifier {
 
   /// The page you host on the origin registered for this integration.
   final String pageUrl;
+
+  /// Headers the page is asked for with, for an origin that will not serve it without.
+  ///
+  /// A development tunnel or a gated staging origin can answer a plain request with its own
+  /// interstitial, which is what the payer would then see where the card box should be.
+  final Map<String, String> pageHeaders;
 
   /// How the box is drawn, shared with the Flutter side of the sheet.
   final PaymentSheetStyle style;
@@ -143,7 +150,7 @@ class CardFieldsController extends ChangeNotifier {
       return controller;
     }
 
-    unawaited(controller.loadRequest(Uri.parse(pageUrl)));
+    unawaited(controller.loadRequest(Uri.parse(pageUrl), headers: pageHeaders));
 
     return controller;
   }

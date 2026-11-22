@@ -478,4 +478,58 @@ void main() {
       expect(find.text(const PaymentSheetStrings().newCard), findsOneWidget);
     });
   });
+
+  /*
+   * A page served through a development tunnel, or from a staging origin behind a gate,
+   * can need a header before it will hand the page over at all. Without one the web view
+   * loads the gate's own page where the card fields should be.
+   */
+  group('the fields page headers', () {
+    const headers = <String, String>{'ngrok-skip-browser-warning': 'true'};
+
+    testWidgets('are sent with the card page', (tester) async {
+      final controller = CardFieldsController(
+        session: testFieldsSession(),
+        pageUrl: testFieldsPageUrl,
+        pageHeaders: headers,
+      );
+
+      expect(controller.webView, isNotNull);
+      await tester.pump();
+
+      expect(webView.controllers.first.headers, headers);
+      controller.dispose();
+    });
+
+    testWidgets('are sent with the wallet page too', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WalletSurface(
+            session: testFieldsSession(),
+            pageUrl: testFieldsPageUrl,
+            wallet: PaymentWallet.googlePay,
+            returnUrl: testReturnUrl,
+            pageHeaders: headers,
+            onComplete: (_) {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(webView.controllers.first.headers, headers);
+    });
+
+    testWidgets('are nothing at all when none were given', (tester) async {
+      final controller = CardFieldsController(
+        session: testFieldsSession(),
+        pageUrl: testFieldsPageUrl,
+      );
+
+      expect(controller.webView, isNotNull);
+      await tester.pump();
+
+      expect(webView.controllers.first.headers, isEmpty);
+      controller.dispose();
+    });
+  });
 }

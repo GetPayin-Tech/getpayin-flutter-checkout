@@ -56,6 +56,17 @@ The origin is not a formality: it is baked into the capture context CyberSource 
 checked on every call, so a page served from anywhere else renders nothing at all. The sheet
 checks it for you and reports `origin_not_allowed` rather than showing you an empty box.
 
+An origin that will not serve the page to a plain request — a development tunnel with an
+interstitial, a staging host behind a gate — takes `fieldsPageHeaders`, which is sent with
+the page and with the wallet's:
+
+```dart
+fieldsPageHeaders: const {'ngrok-skip-browser-warning': 'true'},
+```
+
+Without it the web view loads the gate's own page where the card fields should be, which
+looks exactly like fields that never arrived.
+
 ## Taking a payment
 
 Your server creates the payment with `mode: "fields"` and passes the response on:

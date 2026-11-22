@@ -66,6 +66,26 @@ Check that the `checkoutUrl` your server returned is reachable from the device, 
 link has not expired. The `detail` argument to `onLoadError` names the cause; the provider
 writes it with `debugPrint`, prefixed `GetPayIn checkout:`.
 
+## The card box shows a tunnel or gateway page instead of card fields
+
+The origin served something other than your page. Free development tunnels answer an
+ordinary request with an interstitial, and a gated staging host answers with its sign-in
+page; the web view renders whichever one it got.
+
+Pass the header that origin wants through `fieldsPageHeaders`, which the sheet sends with
+the fields page and with the wallet's:
+
+```dart
+PaymentSheetConfiguration(
+  fieldsPageUrl: 'https://your-tunnel.example.dev/paylink-fields.html',
+  fieldsPageHeaders: const {'ngrok-skip-browser-warning': 'true'},
+  // ...
+)
+```
+
+A quick way to tell this apart from a page that is genuinely missing: fetch the URL with
+`curl` and compare the byte count with your own file's. An interstitial is much smaller.
+
 ## `GetPayInProviderMissingError`
 
 An in-app checkout was opened with no `GetPayInProvider` mounted above it. Mount it under

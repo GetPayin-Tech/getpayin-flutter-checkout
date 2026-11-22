@@ -97,6 +97,9 @@ class FakeWebViewController extends PlatformWebViewController {
   /// The pages this controller was asked to load, in order.
   final List<Uri> loaded = <Uri>[];
 
+  /// The headers it was asked to send with the most recent load.
+  Map<String, String> headers = const <String, String>{};
+
   /// The channels the host registered on this page, by name.
   final Map<String, JavaScriptChannelParams> channels =
       <String, JavaScriptChannelParams>{};
@@ -160,6 +163,7 @@ class FakeWebViewController extends PlatformWebViewController {
   @override
   Future<void> loadRequest(LoadRequestParams params) async {
     loaded.add(params.uri);
+    headers = params.headers;
 
     final failure = loadFailure;
 

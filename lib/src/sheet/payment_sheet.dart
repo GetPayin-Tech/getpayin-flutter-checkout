@@ -28,6 +28,7 @@ class PaymentSheetConfiguration {
     required this.session,
     required this.fieldsPageUrl,
     required this.returnUrl,
+    this.fieldsPageHeaders = const <String, String>{},
     this.expectedInvoiceId,
     this.amountLabel,
     this.wallets = const <PaymentWallet>[],
@@ -47,6 +48,13 @@ class PaymentSheetConfiguration {
 
   /// The link a wallet charge comes back to, and the one the hosted fallback uses.
   final String returnUrl;
+
+  /// Headers the fields page is asked for with, for an origin that will not serve it
+  /// without one.
+  ///
+  /// A development tunnel or a gated staging origin can answer a plain request with its own
+  /// interstitial, which is what the payer would then see where the sheet should be.
+  final Map<String, String> fieldsPageHeaders;
 
   /// The invoice this payment is for, so a result naming another one is refused.
   final Object? expectedInvoiceId;
@@ -170,6 +178,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   late final CardFieldsController _card = CardFieldsController(
     session: _config.session,
     pageUrl: _config.fieldsPageUrl,
+    pageHeaders: _config.fieldsPageHeaders,
     style: _config.style,
     onPayment: _onPayment,
     onFailure: _onFieldsFailure,
@@ -359,6 +368,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
           child: WalletSurface(
             session: _config.session,
             pageUrl: _config.fieldsPageUrl,
+            pageHeaders: _config.fieldsPageHeaders,
             wallet: wallet,
             returnUrl: _config.returnUrl,
             expectedInvoiceId: _config.expectedInvoiceId,

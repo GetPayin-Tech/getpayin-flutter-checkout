@@ -24,6 +24,7 @@ class WalletSurface extends StatefulWidget {
     required this.wallet,
     required this.returnUrl,
     required this.onComplete,
+    this.pageHeaders = const <String, String>{},
     this.expectedInvoiceId,
     this.ownSchemes = const <String>[],
     this.height = 48,
@@ -35,6 +36,9 @@ class WalletSurface extends StatefulWidget {
 
   /// The page you host on the origin registered for this integration.
   final String pageUrl;
+
+  /// Headers the page is asked for with, for an origin that will not serve it without.
+  final Map<String, String> pageHeaders;
 
   /// The one wallet this payment's capture context carries.
   final PaymentWallet wallet;
@@ -81,6 +85,7 @@ class _WalletSurfaceState extends State<WalletSurface> {
           wallets: <String>[widget.wallet.wireName],
         ),
       ),
+      headers: widget.pageHeaders,
     );
 
   NavigationDecision _onNavigationRequest(NavigationRequest request) {
