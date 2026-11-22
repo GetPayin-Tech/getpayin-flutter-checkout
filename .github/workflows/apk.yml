@@ -13,6 +13,12 @@ on:
         description: The fields page, on the origin registered for your integration
         required: false
         default: ''
+      mode:
+        description: Build mode. Debug is JIT and slow to draw; use release to judge speed.
+        required: false
+        default: debug
+        type: choice
+        options: [debug, profile, release]
   push:
     tags: ['v*']
 
@@ -34,14 +40,18 @@ jobs:
 
       - run: flutter pub get
 
-      # Debug rather than release: a release APK is unsigned and will not install, and this
-      # is a harness for trying a real checkout on a real phone. The two addresses are built
-      # in rather than typed on the phone, and rather than committed.
+      # Debug by default because it is the mode that reports and asserts the most, and this
+      # is a harness for trying a real checkout on a real phone. It is also JIT, so the
+      # sheet draws slowly and the web view costs more than it will in anyone's app: judge
+      # speed on a release build. Every mode installs, since the example signs release with
+      # the debug key. The two addresses are built in rather than typed on the phone, and
+      # rather than committed.
       - name: Build the example
         working-directory: example
         env:
           PAYMENTS_SERVER: ${{ inputs.payments_server }}
           FIELDS_PAGE: ${{ inputs.fields_page }}
+          MODE: ${{ inputs.mode || 'debug' }}
         run: |
           defines=()
           if [ -n "$PAYMENTS_SERVER" ]; then
@@ -50,10 +60,10 @@ jobs:
           if [ -n "$FIELDS_PAGE" ]; then
             defines+=("--dart-define=FIELDS_PAGE=$FIELDS_PAGE")
           fi
-          flutter build apk --debug "${defines[@]}"
+          flutter build apk "--$MODE" "${defines[@]}"
 
       - uses: actions/upload-artifact@v5
         with:
-          name: getpayin-checkout-example-debug
-          path: example/build/app/outputs/flutter-apk/app-debug.apk
+          name: getpayin-checkout-example-${{ inputs.mode || 'debug' }}
+          path: example/build/app/outputs/flutter-apk/app-${{ inputs.mode || 'debug' }}.apk
           if-no-files-found: error
