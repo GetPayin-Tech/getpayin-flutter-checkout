@@ -101,7 +101,7 @@ if (result.status == CheckoutStatus.paid) {
 
 `result` is the same `CheckoutResult` the hosted checkout returns, read by the same rules:
 only `PAID` is paid, and a charge booked against another invoice is refused. It is still a
-report of what PayLink said, never proof of payment — confirm the `payment.*` webhook on your
+report of what PayLink said, never proof of payment — confirm the `invoice.paid` webhook on your
 server before you deliver anything.
 
 ## Wallets

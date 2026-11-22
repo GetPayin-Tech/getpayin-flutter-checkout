@@ -76,7 +76,7 @@ unlocks a stored card has no business travelling through a public app scheme.
 
 It reaches you on the **`card_token.created` webhook**, which is also what makes the save
 real: a payer whose phone dies between the vaulting and the return link has still saved
-their card. Treat the webhook as the record, exactly as you treat `payment.*` for a payment.
+their card. Treat the webhook as the record, exactly as you treat `invoice.paid` for a payment.
 
 ## Binding the run to its own result
 

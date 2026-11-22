@@ -136,7 +136,7 @@ in iframes on the page you host. What the page hands back is a one-time transien
 the page has to be served from the origin registered on your integration. The sheet refuses
 to load a page from anywhere else rather than showing an empty box.
 
-**A charge is idempotent per payment.** PayLink holds it behind a per-payment lock, so a
+**A charge is idempotent per invoice.paid* PayLink holds it behind a per-payment lock, so a
 double-tapped pay button is refused with `in_progress` rather than charged twice.
 
 ## Saving a card
@@ -175,7 +175,7 @@ not, because GetPayIn always sends one.
 ## What is out of scope
 
 1. **Forging the exact return link.** An attacker who opens your app with a correctly shaped
-   link naming the right invoice at the right moment can make the app _display_ a success.
+   link naming the right invoice at the right moment can make the app *display* a success.
    They cannot make your server believe it. This is why the webhook check is not optional.
 2. **A compromised device.** Root, a malicious keyboard, screen recording. Nothing a payment
    SDK does survives that.

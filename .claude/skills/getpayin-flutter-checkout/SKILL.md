@@ -10,11 +10,11 @@ came back. It holds no secret and signs nothing.
 
 ## The rule that matters most
 
-**The result in the app is never proof of payment.** The app's return scheme is public, so
+**The result in the app is never proof of invoice.paid* The app's return scheme is public, so
 anything on the phone can open the app with
 `myapp://payment-return?success=1&invoice_id=anything`.
 
-So `status == CheckoutStatus.paid` may update the UI, but only the server's `payment.*`
+So `status == CheckoutStatus.paid` may update the UI, but only the server's `invoice.paid`
 webhook may unlock, ship, credit or grant anything. If the user asks for an app-side-only
 confirmation, say why that is unsafe and offer the server check.
 
@@ -120,7 +120,7 @@ When integrating:
     verification run leaves its invoice unpaid on purpose, so `open` would report every
     successful save as `notPaid`. The token is never on the return link — it arrives with
     the `card_token.created` webhook. The payment sheet cannot save a card at all.
-11. **Wire the server side**: `POST /api/v2/integration/init` to create, the `payment.*`
+11. **Wire the server side**: `POST /api/v2/integration/init` to create, the `invoice.paid`
     webhook to confirm. Deliver only when the verified event says success, the invoice
     status is `PAID`, and the invoice is one that server created.
 
