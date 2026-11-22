@@ -58,10 +58,22 @@ class FieldsChanged extends FieldsEvent {
   final String? value;
 }
 
-/// 3-D Secure started. The page raises its own challenge frame over everything.
+/// 3-D Secure started.
+///
+/// In two stages, and the sheet owes the payer something different in each. `setup` is the
+/// gateway talking to the issuer with nothing to show for it; `challenge` is the issuer
+/// asking the payer a question, framed by the SDK inside the box, which then needs the
+/// whole screen. Treating the first like the second strands the payer on a card form that
+/// has stopped responding.
 class FieldsAuthenticating extends FieldsEvent {
   /// Creates the authenticating event.
-  const FieldsAuthenticating();
+  const FieldsAuthenticating({this.stage = 'setup'});
+
+  /// `setup` or `challenge`.
+  final String stage;
+
+  /// True once the issuer is asking the payer something.
+  bool get isChallenge => stage == 'challenge';
 }
 
 /// The charge is running and can no longer be cancelled.
@@ -161,7 +173,9 @@ FieldsEvent? parseFieldsEvent(String raw) {
         couldBeValid: decoded['couldBeValid'] != false,
         value: _stringAt(decoded, 'value'),
       ),
-    'authenticating' => const FieldsAuthenticating(),
+    'authenticating' => FieldsAuthenticating(
+        stage: _stringAt(decoded, 'stage') ?? 'setup',
+      ),
     'charging' => const FieldsCharging(),
     'payment' => FieldsPayment(
         success: decoded['success'] == true,

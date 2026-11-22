@@ -91,6 +91,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _googlePayInApp = false;
   bool _useSheet = false;
   bool _collectBilling = false;
+  bool _tokenize = false;
   bool _busy = false;
   String? _step;
   CheckoutResult? _result;
@@ -213,6 +214,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'currency': _currency.text.trim().toUpperCase(),
         'title': 'Example order',
         'hosted_fields': _useSheet,
+        'tokenize': _tokenize,
       }),
     );
 
@@ -314,6 +316,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 'Ask for the address the card is billed to, which is what AVS checks.',
               ),
             ),
+          SwitchListTile(
+            value: _tokenize,
+            onChanged:
+                _busy ? null : (value) => setState(() => _tokenize = value),
+            title: const Text('Keep the card'),
+            subtitle: const Text(
+              'Vault the card while charging it, so it can be charged again later.',
+            ),
+          ),
           SwitchListTile(
             value: _googlePayInApp,
             onChanged: _busy

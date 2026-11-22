@@ -428,7 +428,10 @@ void main() {
       await tester.tap(find.byTooltip(const PaymentSheetStrings().back));
       await pumpFrames(tester);
 
-      postToCard(<String, Object?>{'type': 'authenticating'});
+      postToCard(<String, Object?>{
+        'type': 'authenticating',
+        'stage': 'challenge',
+      });
       await pumpFrames(tester);
 
       expect(find.text(const PaymentSheetStrings().newPaymentMethod),
@@ -450,7 +453,10 @@ void main() {
       await pumpFrames(tester);
 
       tester.view.viewInsets = const FakeViewPadding(bottom: 900);
-      postToCard(<String, Object?>{'type': 'authenticating'});
+      postToCard(<String, Object?>{
+        'type': 'authenticating',
+        'stage': 'challenge',
+      });
       await pumpFrames(tester);
 
       expect(tester.takeException(), isNull);

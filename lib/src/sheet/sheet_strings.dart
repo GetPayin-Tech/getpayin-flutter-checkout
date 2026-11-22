@@ -15,6 +15,8 @@ class PaymentSheetStrings {
     this.expiry = 'MM / YY',
     this.securityCode = 'CVC',
     this.billingAddress = 'Billing address',
+    this.paymentComplete = 'Payment complete',
+    this.processing = 'Processing your payment',
     this.country = 'Country or region',
     this.addressLine = 'Address',
     this.city = 'City',
@@ -69,6 +71,12 @@ class PaymentSheetStrings {
 
   /// The label over the billing address.
   final String billingAddress;
+
+  /// What the sheet says once the payment has gone through.
+  final String paymentComplete;
+
+  /// What it says while the charge is running and there is nothing to answer.
+  final String processing;
 
   /// The label on the country list.
   final String country;

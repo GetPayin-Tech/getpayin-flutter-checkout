@@ -52,17 +52,39 @@ String buildFieldsPageHtml(
     padding: 0; min-width: 0;
   }
   input::placeholder { color: var(--placeholder, #a3acb9); }
+  .marks {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    display: flex; gap: 4px; pointer-events: none;
+  }
+  .mark {
+    width: 32px; height: 22px; border-radius: 4px; background: #f1f1f3;
+    color: #30313d; font-size: 8px; font-weight: 700; line-height: 22px;
+    text-align: center; letter-spacing: 0.2px;
+  }
+  .mark[hidden] { display: none; }
+  /* The gateway's wallet widget renders its own launchers at its own size. These are the
+     same rules PayLink's own checkout puts around it, so the button is one row of this
+     form rather than a panel sitting on top of one. */
   #wallet { min-height: var(--rowHeight, 56px); }
+  #wallet .app { display: flex; flex: 1; gap: 12px; align-items: stretch; }
+  #wallet .app > * { flex: 1 1 0; min-width: 0; width: auto; margin: 0; }
+  #wallet .launcher-googlepay { height: var(--rowHeight, 56px); border: 0; }
+  #wallet apple-pay-button {
+    --apple-pay-button-width: 100%;
+    --apple-pay-button-height: var(--rowHeight, 56px);
+    --apple-pay-button-border-radius: var(--radius, 8px);
+    width: 100%;
+  }
 </style>
 </head>
 <body>
   <div id="card">
     <div id="box">
       <div class="row" id="name-row" hidden><div class="cell"><input id="name" autocomplete="cc-name" aria-label="Name on card"></div></div>
-      <div class="row"><div class="cell"><div id="number"></div></div></div>
+      <div class="row"><div class="cell"><div id="number"></div><span class="marks" id="marks"><span class="mark" data-brand="visa">VISA</span><span class="mark" data-brand="mastercard">MC</span><span class="mark" data-brand="amex">AMEX</span><span class="mark" data-brand="unionpay">UP</span></span></div></div>
       <div class="row">
         <div class="cell"><input id="expiry" inputmode="numeric" autocomplete="cc-exp" aria-label="Expiry"></div>
-        <div class="cell"><div id="cvc"></div></div>
+        <div class="cell"><div id="cvc"></div><span class="marks"><span class="mark">CVC</span></span></div>
       </div>
     </div>
   </div>
@@ -167,9 +189,29 @@ String buildFieldsPageHtml(
     });
   }
 
+  /**
+   * Shows the networks a card could still be on, narrowing to one as the gateway decides.
+   *
+   * The number itself is rendered by the gateway in its own frame, so these sit beside it
+   * in the page's own markup and take no pointer events: a tap anywhere in the row still
+   * belongs to the field.
+   */
+  function showBrands(state) {
+    var detected = (state && state.card) || [];
+    var named = detected.length === 1 ? String(detected[0].name || '') : '';
+    var marks = document.querySelectorAll('#marks .mark');
+
+    for (var index = 0; index < marks.length; index++) {
+      marks[index].hidden = named !== '' && marks[index].dataset.brand !== named;
+    }
+  }
+
   function listen(instance, walletMode) {
     instance.on('change', function (event) {
       var state = event.state || {};
+
+      if (event.field === 'number') { showBrands(state); }
+
       post({
         type: 'change',
         field: event.field,
@@ -178,7 +220,9 @@ String buildFieldsPageHtml(
         couldBeValid: state.couldBeValid !== false
       });
     });
-    instance.on('authenticating', function () { post({ type: 'authenticating' }); });
+    instance.on('authenticating', function (event) {
+      post({ type: 'authenticating', stage: (event && event.stage) || 'setup' });
+    });
     instance.on('charging', function () { post({ type: 'charging' }); });
     instance.on('walletready', function (event) {
       post({ type: 'walletready', paymentTypes: (event && event.paymentTypes) || [] });

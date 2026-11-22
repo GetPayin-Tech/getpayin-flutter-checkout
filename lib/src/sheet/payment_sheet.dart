@@ -34,6 +34,7 @@ class PaymentSheetConfiguration {
     this.collectBillingAddress = false,
     this.billingCountries = defaultBillingCountries,
     this.billingCountry = 'EG',
+    this.successPause = const Duration(milliseconds: 1200),
     this.expectedInvoiceId,
     this.amountLabel,
     this.wallets = const <PaymentWallet>[],
@@ -75,6 +76,12 @@ class PaymentSheetConfiguration {
 
   /// The country the billing form starts on, as an ISO 3166-1 alpha-2 code.
   final String billingCountry;
+
+  /// How long the sheet says the payment went through before it closes.
+  ///
+  /// A sheet that vanishes the instant the gateway answers leaves the payer wondering
+  /// whether it did. Set it to [Duration.zero] to close as soon as the answer arrives.
+  final Duration successPause;
 
   /// The invoice this payment is for, so a result naming another one is refused.
   final Object? expectedInvoiceId;
@@ -178,7 +185,7 @@ class _Fallback extends _SheetOutcome {
   const _Fallback();
 }
 
-enum _Screen { methods, selectCard, newCard }
+enum _Screen { methods, selectCard, newCard, done }
 
 /// How tall the card box grows for a 3-D Secure challenge, where there is room for it.
 ///
@@ -266,7 +273,29 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       return;
     }
 
+    if (result.status == CheckoutStatus.paid &&
+        _config.successPause > Duration.zero) {
+      _sayItWentThrough(result);
+
+      return;
+    }
+
     _close(_Settled(result));
+  }
+
+  /// Tells the payer the payment went through, then closes on the same result.
+  ///
+  /// The sheet is the last thing the payer sees of their own payment, and closing the
+  /// moment the gateway answers reads as the sheet giving up rather than as it finishing.
+  /// It is still only a report of what PayLink said, not proof: the webhook is that.
+  void _sayItWentThrough(CheckoutResult result) {
+    setState(() => _screen = _Screen.done);
+
+    Future<void>.delayed(_config.successPause, () {
+      if (mounted) {
+        _close(_Settled(result));
+      }
+    });
   }
 
   void _close(_SheetOutcome outcome) {
@@ -390,6 +419,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       _Screen.methods => _methods(),
       _Screen.selectCard => _selectCard(),
       _Screen.newCard => _newCard(),
+      _Screen.done => _done(),
     };
   }
 
@@ -417,6 +447,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
             returnUrl: _config.returnUrl,
             expectedInvoiceId: _config.expectedInvoiceId,
             ownSchemes: _config.ownSchemes,
+            height: _config.style.rowHeight,
             onComplete: _settle,
           ),
         ),
@@ -515,6 +546,29 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     final room = media.size.height - media.viewInsets.bottom - _sheetChrome;
 
     return math.max(math.min(_challengeHeight, room), 0);
+  }
+
+  /// The last thing the payer sees: that it worked, and what for.
+  List<Widget> _done() {
+    return <Widget>[
+      const SizedBox(height: 24),
+      PaidMark(style: _config.style),
+      const SizedBox(height: 16),
+      Center(
+        child:
+            SheetTitle(_config.strings.paymentComplete, style: _config.style),
+      ),
+      if (_amountLabel.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            _amountLabel,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, color: _config.style.mutedText),
+          ),
+        ),
+      const SizedBox(height: 32),
+    ];
   }
 
   List<Widget> _newCard() {

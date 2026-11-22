@@ -263,6 +263,30 @@ class BrandMark extends StatelessWidget {
       };
 }
 
+/// The tick the sheet ends on, in the accent the pay button was drawn in.
+///
+/// Flat, and no bigger than it needs to be: a payment going through is the expected
+/// outcome, and a sheet that celebrates it reads as relief that it worked.
+class PaidMark extends StatelessWidget {
+  /// Creates the mark.
+  const PaidMark({required this.style, super.key});
+
+  /// How the sheet is drawn.
+  final PaymentSheetStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(color: style.accent, shape: BoxShape.circle),
+        child: Icon(Icons.check_rounded, size: 32, color: style.accentText),
+      ),
+    );
+  }
+}
+
 /// A tappable word in the sheet's accent colour.
 class LinkText extends StatelessWidget {
   /// Creates the link.

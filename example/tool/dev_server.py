@@ -95,13 +95,15 @@ def create_payment(
     title: str,
     config: dict[str, str],
     hosted_fields: bool = False,
+    tokenize: bool = False,
 ) -> dict:
     """Creates one payment and hands back the whole of what `/init` answered.
 
     The app is given the `data` block rather than a URL, so it can read the hosted-fields
     session out of it the way an integrator's app would.
 
-    `mode` is not signed, so asking for hosted fields changes nothing about the signature.
+    Neither `mode` nor `tokenize` is signed, so asking for hosted fields, or for the card to
+    be kept for next time, changes nothing about the signature.
     A company that does not have them answers 403 `fields_unavailable`, and rather than
     leave the tester with nothing, this asks again without them and says what happened.
     """
@@ -117,6 +119,9 @@ def create_payment(
     )
     if hosted_fields:
         payload["mode"] = "fields"
+
+    if tokenize:
+        payload["tokenize"] = True
 
     payload["token"] = config["GETPAYIN_PUBLIC_TOKEN"]
     payload["signature"] = sign(payload, config["GETPAYIN_HASH_TOKEN"])
@@ -142,7 +147,9 @@ def create_payment(
         refusal = refused_code(detail)
 
         if hosted_fields and refusal:
-            plain = create_payment(amount, currency, title, config, hosted_fields=False)
+            plain = create_payment(
+                amount, currency, title, config, hosted_fields=False, tokenize=tokenize
+            )
             plain["fields_error"] = refusal
 
             return plain
@@ -152,6 +159,18 @@ def create_payment(
     return {"data": body.get("data", body), "fields_error": None}
 
 
+# Refusals that mean "take this payment on the hosted checkout instead", rather than
+# "this payment cannot be taken". `tokenize_unavailable_on_fields` is among them by design:
+# keeping a card needs consent wording PayLink can evidence, and on a page the integrator
+# owns there is nothing it could show or stand behind.
+FALLS_BACK_TO_CHECKOUT = {
+    "fields_unavailable",
+    "fields_unsupported",
+    "origin_missing",
+    "tokenize_unavailable_on_fields",
+}
+
+
 def refused_code(detail: str) -> str | None:
     """The `code` a refusal carries, when it is one hosted fields can be refused with."""
     try:
@@ -159,7 +178,7 @@ def refused_code(detail: str) -> str | None:
     except json.JSONDecodeError:
         return None
 
-    return code if code in {"fields_unavailable", "fields_unsupported", "origin_missing"} else None
+    return code if code in FALLS_BACK_TO_CHECKOUT else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -190,6 +209,7 @@ class Handler(BaseHTTPRequestHandler):
                 title=str(asked.get("title") or "Example order"),
                 config=self.config,
                 hosted_fields=bool(asked.get("hosted_fields")),
+                tokenize=bool(asked.get("tokenize")),
             )
         except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
             self._send(502, {"error": str(failure)})

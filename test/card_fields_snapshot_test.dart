@@ -128,11 +128,27 @@ void main() {
       );
       final authenticating = applyFieldsEvent(
         charging,
-        const FieldsAuthenticating(),
+        const FieldsAuthenticating(stage: 'challenge'),
       );
 
       expect(authenticating.charging, isTrue);
       expect(authenticating.authenticating, isTrue);
+    });
+
+    /*
+     * Setting up payer authentication is the gateway talking to the issuer, with nothing
+     * for the payer to answer. A sheet that hands the box the whole screen for it leaves
+     * them looking at a card form that has stopped responding.
+     */
+    test('keeps the screen while the gateway is only setting up', () {
+      final setup = applyFieldsEvent(
+        const CardFieldsSnapshot(ready: true),
+        const FieldsAuthenticating(),
+      );
+
+      expect(setup.authenticating, isFalse);
+      expect(setup.charging, isTrue,
+          reason: 'the payer should see the charge is under way');
     });
 
     test('ends both the moment the charge answers', () {

@@ -48,10 +48,12 @@ void main() {
     Future<CheckoutResult> Function(SavedCard card)? chargeSavedCard,
     bool fallBackToHostedCheckout = true,
     bool collectBillingAddress = false,
+    Duration successPause = Duration.zero,
     String origin = testOrigin,
   }) {
     return PaymentSheetConfiguration(
       collectBillingAddress: collectBillingAddress,
+      successPause: successPause,
       session: testFieldsSession(origin: origin),
       fieldsPageUrl: testFieldsPageUrl,
       returnUrl: testReturnUrl,
@@ -365,7 +367,10 @@ void main() {
     await tester.tap(find.text(const PaymentSheetStrings().newCard));
     await pumpFrames(tester);
 
-    postToCard(<String, Object?>{'type': 'authenticating'});
+    postToCard(<String, Object?>{
+      'type': 'authenticating',
+      'stage': 'challenge',
+    });
     await pumpFrames(tester);
 
     expect(find.text(const PaymentSheetStrings().addNewCard), findsNothing);
@@ -411,6 +416,96 @@ void main() {
 
     // Tapping it did nothing: the list is still up.
     expect(find.text(const PaymentSheetStrings().selectCard), findsOneWidget);
+  });
+
+  /*
+   * The sheet is the last thing a payer sees of their own payment. Closing the instant the
+   * gateway answers reads as the sheet giving up rather than as it finishing, so it says so
+   * first -- and still settles on the same result it would have settled on.
+   */
+  group('a payment that went through', () {
+    testWidgets('is announced before the sheet closes', (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(successPause: const Duration(milliseconds: 1200)),
+      );
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'payment',
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await tester.pump();
+
+      expect(
+        find.text(const PaymentSheetStrings().paymentComplete),
+        findsOneWidget,
+      );
+      expect(find.text(r'$97.42'), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 1200));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.paid);
+    });
+
+    testWidgets('closes straight away when nothing is to be said',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'payment',
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        find.text(const PaymentSheetStrings().paymentComplete),
+        findsNothing,
+      );
+      expect((await pending).status, CheckoutStatus.paid);
+    });
+
+    testWidgets('says nothing of the kind about a decline', (tester) async {
+      await openSheet(
+        tester,
+        configuration(successPause: const Duration(milliseconds: 1200)),
+      );
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'payment',
+        'success': false,
+        'message': 'Your card was declined.',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        find.text(const PaymentSheetStrings().paymentComplete),
+        findsNothing,
+      );
+      expect(find.text('Your card was declined.'), findsOneWidget);
+    });
   });
 
   /*

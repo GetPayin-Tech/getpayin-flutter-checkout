@@ -117,7 +117,10 @@ CardFieldsSnapshot applyFieldsEvent(
         empty: empty,
         value: value,
       ),
-    FieldsAuthenticating() => snapshot.copyWith(authenticating: true),
+    FieldsAuthenticating(:final isChallenge) => snapshot.copyWith(
+        authenticating: isChallenge,
+        charging: true,
+      ),
     FieldsCharging() => snapshot.copyWith(charging: true),
     FieldsPayment() =>
       snapshot.copyWith(charging: false, authenticating: false),
