@@ -145,6 +145,17 @@ schemes to declare in `LSApplicationQueriesSchemes`.
 
 ## Android
 
+Your app needs the INTERNET permission in
+`android/app/src/main/AndroidManifest.xml`, as a direct child of `<manifest>`:
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+Flutter's template declares it in the *debug* manifest only, where the tool needs it for
+hot reload, so an app that never adds it here works right through development and then
+cannot open a socket in release. Every call fails with `errno = 1`, the checkout included.
+
 Nothing to configure for Google Pay in the browser sheet, which is the default.
 
 For Google Pay **inside your app's own screen** (`googlePayInApp: true`), Android's WebView

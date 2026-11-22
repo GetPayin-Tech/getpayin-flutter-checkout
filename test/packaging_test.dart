@@ -30,4 +30,22 @@ void main() {
       });
     });
   });
+
+  /*
+   * Flutter's template puts the INTERNET permission in the debug manifest only, because
+   * that is where the tool needs it for hot reload. An app that does not repeat it in the
+   * main manifest works all the way through development and then cannot open a socket in
+   * release: every call fails with EPERM, the checkout included.
+   */
+  group('the example manifest', () {
+    const manifest = 'example/android/app/src/main/AndroidManifest.xml';
+
+    test('asks for INTERNET, which release builds do not inherit', () {
+      expect(
+        File(manifest).readAsStringSync(),
+        contains('android.permission.INTERNET'),
+        reason: 'without it a release build cannot reach GetPayIn at all',
+      );
+    });
+  });
 }

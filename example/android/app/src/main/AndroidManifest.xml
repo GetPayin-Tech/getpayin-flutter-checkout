@@ -1,5 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Every app that takes a payment needs this. Flutter's template declares it in the
+         debug manifest alone, for hot reload, so an app that does not repeat it here works
+         right through development and then cannot open a socket in release. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
+        android:networkSecurityConfig="@xml/network_security_config"
         android:label="getpayin_checkout_example"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

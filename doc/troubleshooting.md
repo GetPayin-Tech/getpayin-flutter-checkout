@@ -71,6 +71,17 @@ and one more: the company has to sell the wallet. PayLink mints a wallets captur
 only for a company subscribed to Google Pay, and answers with no `wallets` block
 otherwise, at which point the SDK reports no wallet and the button never arrives.
 
+## Everything fails with `errno = 1` in a release build, but debug worked
+
+`SocketException: Connection failed (OS Error: Operation not permitted, errno = 1)` is
+Android refusing the socket because the app has no INTERNET permission. Flutter's template
+declares it in the debug manifest alone, so the app networks fine until the day it is built
+for release. Add it to the main manifest — see [Setup](setup.md#android).
+
+A plain-HTTP address of your own fails separately, and silently differently: Android has
+refused cleartext by default since Android 9. GetPayIn is HTTPS throughout, so this only
+reaches a development server of yours.
+
 ## A blank white checkout screen
 
 The page could not load. The provider shows the message and a close button; if you render
