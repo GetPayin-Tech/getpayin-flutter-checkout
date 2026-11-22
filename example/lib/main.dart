@@ -63,8 +63,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final TextEditingController _server = TextEditingController(
     text: defaultPaymentsServer,
   );
+  final TextEditingController _fieldsPage = TextEditingController();
 
   bool _googlePayInApp = false;
+  bool _useSheet = false;
   bool _busy = false;
   String? _step;
   CheckoutResult? _result;
@@ -75,10 +77,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _amount.dispose();
     _currency.dispose();
     _server.dispose();
+    _fieldsPage.dispose();
     super.dispose();
   }
 
-  /// Asks the dev server for a payment and opens whatever checkout it hands back.
+  /// Asks the dev server for a payment and takes it, on whichever surface is asked for.
   Future<void> _pay() async {
     setState(() {
       _busy = true;
@@ -88,19 +91,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
     });
 
     try {
-      final checkoutUrl = await _createPayment();
+      final payment = await _createPayment();
+      final session = PayLinkFieldsSession.fromInit(payment.data);
 
       setState(() => _step = 'Waiting for the payer…');
 
-      final result = await GetPayInCheckout.open(
-        checkoutUrl,
-        OpenCheckoutOptions(
-          returnUrl: returnUrl,
-          expectedInvoiceId: invoiceIdInCheckoutUrl(checkoutUrl),
-          googlePayInApp: _googlePayInApp,
-          title: 'Pay for your order',
-        ),
-      );
+      final result =
+          _useSheet && session != null && _fieldsPage.text.trim().isNotEmpty
+              ? await _showSheet(session)
+              : await _openHostedCheckout(payment, session);
 
       setState(() => _result = result);
     } on GetPayInCheckoutError catch (error) {
@@ -117,29 +116,90 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  /// The `checkout_url` the dev server created for this amount.
+  /// Takes the payment on the sheet, with the card fields on the page you host.
+  Future<CheckoutResult> _showSheet(PayLinkFieldsSession session) {
+    return GetPayInPaymentSheet.show(
+      context,
+      PaymentSheetConfiguration(
+        session: session,
+        fieldsPageUrl: _fieldsPage.text.trim(),
+        returnUrl: returnUrl,
+        expectedInvoiceId: session.invoiceId,
+        amountLabel:
+            '${_amount.text.trim()} ${_currency.text.trim().toUpperCase()}',
+        wallets: const <PaymentWallet>[
+          PaymentWallet.applePay,
+          PaymentWallet.googlePay,
+        ],
+      ),
+    );
+  }
+
+  /// Takes the payment on the hosted checkout, and says why if the sheet was wanted.
   ///
-  /// Everything the API needs signing is done there, so what reaches the phone is a link
-  /// and nothing else.
-  Future<String> _createPayment() async {
+  /// A company without hosted card fields, or a payment the fields cannot take, is the
+  /// documented reason to send the payer here, so the harness does exactly that and names
+  /// the code the API answered with.
+  Future<CheckoutResult> _openHostedCheckout(
+    _Payment payment,
+    PayLinkFieldsSession? session,
+  ) async {
+    if (_useSheet) {
+      setState(() => _failure = _whySheetIsNotShowing(payment, session));
+    }
+
+    return GetPayInCheckout.open(
+      payment.checkoutUrl,
+      OpenCheckoutOptions(
+        returnUrl: returnUrl,
+        expectedInvoiceId: invoiceIdInCheckoutUrl(payment.checkoutUrl),
+        googlePayInApp: _googlePayInApp,
+        title: 'Pay for your order',
+      ),
+    );
+  }
+
+  /// What is standing between this payment and the sheet.
+  String _whySheetIsNotShowing(
+      _Payment payment, PayLinkFieldsSession? session) {
+    if (payment.fieldsError != null) {
+      return 'The API answered ${payment.fieldsError}, so the hosted checkout was used.';
+    }
+
+    if (session == null) {
+      return 'This payment carries no fields session, so the hosted checkout was used.';
+    }
+
+    return 'No fields page URL, so the hosted checkout was used. It has to be served from '
+        '${session.origin}.';
+  }
+
+  /// What the dev server made for this amount.
+  ///
+  /// Everything the API needs signing is done there, so what reaches the phone is the
+  /// answer `/init` gave and nothing else.
+  Future<_Payment> _createPayment() async {
     final answer = await http.post(
       Uri.parse(_server.text.trim()),
       headers: const <String, String>{'Content-Type': 'application/json'},
-      body: jsonEncode(<String, String>{
+      body: jsonEncode(<String, Object?>{
         'amount': _amount.text.trim(),
         'currency': _currency.text.trim().toUpperCase(),
         'title': 'Example order',
+        'hosted_fields': _useSheet,
       }),
     );
 
     final body = jsonDecode(answer.body) as Map<String, Object?>;
-    final checkoutUrl = body['checkout_url'];
 
-    if (answer.statusCode >= 300 || checkoutUrl is! String) {
+    if (answer.statusCode >= 300 || body['data'] is! Map<String, Object?>) {
       throw StateError('${body['error'] ?? answer.body}');
     }
 
-    return checkoutUrl;
+    return _Payment(
+      data: body['data']! as Map<String, Object?>,
+      fieldsError: body['fields_error'] as String?,
+    );
   }
 
   /// Where this build would draw the checkout, which is the first thing to check on a phone.
@@ -197,6 +257,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
             ),
           ),
           SwitchListTile(
+            value: _useSheet,
+            onChanged:
+                _busy ? null : (value) => setState(() => _useSheet = value),
+            title: const Text('Payment sheet'),
+            subtitle: const Text(
+              'Hosted card fields, on a page you serve from the registered origin.',
+            ),
+          ),
+          if (_useSheet)
+            TextField(
+              controller: _fieldsPage,
+              autocorrect: false,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'Fields page URL',
+                helperText:
+                    'doc/paylink-fields.html, on your registered origin.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          SwitchListTile(
             value: _googlePayInApp,
             onChanged: _busy
                 ? null
@@ -231,6 +312,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
       ),
     );
   }
+}
+
+/// What the dev server answered for one payment.
+class _Payment {
+  const _Payment({required this.data, this.fieldsError});
+
+  /// The `data` block `/init` returned, which the session is read out of.
+  final Map<String, Object?> data;
+
+  /// The code the API refused hosted fields with, when it refused them.
+  final String? fieldsError;
+
+  /// The hosted checkout, which every payment carries whatever else it has.
+  String get checkoutUrl => data['checkout_url']! as String;
 }
 
 /// What came back, as plainly as it can be put.

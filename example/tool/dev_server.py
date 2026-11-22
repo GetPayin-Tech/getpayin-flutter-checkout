@@ -89,8 +89,22 @@ def sign(payload: "OrderedDict[str, str]", hash_token: str) -> str:
     return base64.b64encode(digest).decode()
 
 
-def create_payment(amount: str, currency: str, title: str, config: dict[str, str]) -> dict:
-    """Creates one payment and hands back what the app needs to open it."""
+def create_payment(
+    amount: str,
+    currency: str,
+    title: str,
+    config: dict[str, str],
+    hosted_fields: bool = False,
+) -> dict:
+    """Creates one payment and hands back the whole of what `/init` answered.
+
+    The app is given the `data` block rather than a URL, so it can read the hosted-fields
+    session out of it the way an integrator's app would.
+
+    `mode` is not signed, so asking for hosted fields changes nothing about the signature.
+    A company that does not have them answers 403 `fields_unavailable`, and rather than
+    leave the tester with nothing, this asks again without them and says what happened.
+    """
     payload: "OrderedDict[str, str]" = OrderedDict(
         (
             ("first_name", "Test"),
@@ -101,6 +115,9 @@ def create_payment(amount: str, currency: str, title: str, config: dict[str, str
             ("currency", currency),
         )
     )
+    if hosted_fields:
+        payload["mode"] = "fields"
+
     payload["token"] = config["GETPAYIN_PUBLIC_TOKEN"]
     payload["signature"] = sign(payload, config["GETPAYIN_HASH_TOKEN"])
 
@@ -122,15 +139,27 @@ def create_payment(amount: str, currency: str, title: str, config: dict[str, str
             body = json.loads(answer.read().decode())
     except urllib.error.HTTPError as failure:
         detail = failure.read().decode()[:500]
+        refusal = refused_code(detail)
+
+        if hosted_fields and refusal:
+            plain = create_payment(amount, currency, title, config, hosted_fields=False)
+            plain["fields_error"] = refusal
+
+            return plain
 
         raise RuntimeError(f"{failure.code} from {url}: {detail}") from failure
 
-    data = body.get("data", body)
+    return {"data": body.get("data", body), "fields_error": None}
 
-    return {
-        "checkout_url": data.get("checkout_url"),
-        "invoice_id": data.get("invoice_id"),
-    }
+
+def refused_code(detail: str) -> str | None:
+    """The `code` a refusal carries, when it is one hosted fields can be refused with."""
+    try:
+        code = json.loads(detail).get("code")
+    except json.JSONDecodeError:
+        return None
+
+    return code if code in {"fields_unavailable", "fields_unsupported", "origin_missing"} else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -160,6 +189,7 @@ class Handler(BaseHTTPRequestHandler):
                 currency=str(asked.get("currency", "")).strip().upper(),
                 title=str(asked.get("title") or "Example order"),
                 config=self.config,
+                hosted_fields=bool(asked.get("hosted_fields")),
             )
         except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
             self._send(502, {"error": str(failure)})
