@@ -18,7 +18,19 @@ const String returnUrl = '$appScheme://payment-return';
 /// An app never creates a payment itself: `/init` is signed with the integration's hash
 /// token, and anything that signs belongs on a server. The harness asks its own server for
 /// a `checkout_url` exactly as a real app asks its backend.
-const String defaultPaymentsServer = 'http://192.168.1.6:8788';
+///
+/// Built in with `--dart-define=PAYMENTS_SERVER=...`, so a machine's own address never has
+/// to be typed on a phone, and never has to be committed either.
+const String defaultPaymentsServer = String.fromEnvironment(
+  'PAYMENTS_SERVER',
+  defaultValue: 'http://10.0.2.2:8788',
+);
+
+/// The fields page to start with, from `--dart-define=FIELDS_PAGE=...`.
+///
+/// It has to be served from the origin registered for the integration, so there is no
+/// sensible default: left out, the field starts empty and you type it.
+const String defaultFieldsPage = String.fromEnvironment('FIELDS_PAGE');
 
 /// Headers the fields page is asked for with while it is served through a dev tunnel.
 ///
@@ -72,7 +84,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final TextEditingController _server = TextEditingController(
     text: defaultPaymentsServer,
   );
-  final TextEditingController _fieldsPage = TextEditingController();
+  final TextEditingController _fieldsPage = TextEditingController(
+    text: defaultFieldsPage,
+  );
 
   bool _googlePayInApp = false;
   bool _useSheet = false;

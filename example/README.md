@@ -28,6 +28,28 @@ cd example && flutter run
 Keep that file out of the repository. If a hash token ever reaches a bundle, a page or a
 log, rotate it.
 
+## Putting it on a phone
+
+The `apk` workflow builds the debug APK. Both addresses the harness needs are built in
+rather than typed on a phone, and neither is committed:
+
+```bash
+gh workflow run apk.yml \
+  -f payments_server=http://192.168.1.5:8788 \
+  -f fields_page=https://your-origin.example.com/paylink-fields.html
+```
+
+`payments_server` is `tool/dev_server.py` as the **phone** reaches it, so a LAN address,
+not `localhost`. `fields_page` is only for the payment sheet, and only works from the
+origin registered for the integration. Leave either out and the field starts empty or on
+its default, and you type it on the phone.
+
+Locally the same two go through `--dart-define`:
+
+```bash
+cd example && flutter run --dart-define=PAYMENTS_SERVER=http://192.168.1.5:8788
+```
+
 Android is scaffolded already, and its manifest carries the two things the package needs:
 the `myapp` return scheme and the three `<queries>` entries that let Android's WebView find
 a payment app. For iOS, run `flutter create --platforms=ios .` and add the scheme to

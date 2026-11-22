@@ -4,6 +4,15 @@ name: apk
 # CONTRIBUTING.md, which need a phone, not for the verify loop.
 on:
   workflow_dispatch:
+    inputs:
+      payments_server:
+        description: Where example/tool/dev_server.py is listening, as the phone reaches it
+        required: false
+        default: ''
+      fields_page:
+        description: The fields page, on the origin registered for your integration
+        required: false
+        default: ''
   push:
     tags: ['v*']
 
@@ -26,10 +35,22 @@ jobs:
       - run: flutter pub get
 
       # Debug rather than release: a release APK is unsigned and will not install, and this
-      # is a harness for trying a real checkout on a real phone.
+      # is a harness for trying a real checkout on a real phone. The two addresses are built
+      # in rather than typed on the phone, and rather than committed.
       - name: Build the example
         working-directory: example
-        run: flutter build apk --debug
+        env:
+          PAYMENTS_SERVER: ${{ inputs.payments_server }}
+          FIELDS_PAGE: ${{ inputs.fields_page }}
+        run: |
+          defines=()
+          if [ -n "$PAYMENTS_SERVER" ]; then
+            defines+=("--dart-define=PAYMENTS_SERVER=$PAYMENTS_SERVER")
+          fi
+          if [ -n "$FIELDS_PAGE" ]; then
+            defines+=("--dart-define=FIELDS_PAGE=$FIELDS_PAGE")
+          fi
+          flutter build apk --debug "${defines[@]}"
 
       - uses: actions/upload-artifact@v5
         with:
