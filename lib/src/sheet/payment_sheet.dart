@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 // Material moved to package:material_ui after Flutter 3.47, which does not exist in the
 // older versions this package still supports. The import stays until the floor moves.
@@ -151,11 +152,14 @@ class _Fallback extends _SheetOutcome {
 
 enum _Screen { methods, selectCard, newCard }
 
-/// How tall the card box grows for a 3-D Secure challenge.
+/// How tall the card box grows for a 3-D Secure challenge, where there is room for it.
 ///
 /// The issuer's page is a page, not a row: it carries its own instructions, a one-time code
 /// field and a submit button, and a box sized for a card number would scroll all three.
 const double _challengeHeight = 480;
+
+/// What the sheet spends on itself around the challenge: its own padding and the safe area.
+const double _sheetChrome = 48;
 
 class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   late final PaymentSheetConfiguration _config = widget.configuration;
@@ -200,10 +204,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
 
   void _onFieldsFailure(FieldsError error) {
     if (!error.failure.sendsPayerToHostedCheckout) {
-      setState(() {
-        _charging = false;
-        _error = error.message ?? _config.strings.cardDeclined;
-      });
+      _showRetryable(error.message ?? _config.strings.cardDeclined);
 
       return;
     }
@@ -225,10 +226,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
 
   void _settle(CheckoutResult result) {
     if (result.status == CheckoutStatus.notPaid && result.code == null) {
-      setState(() {
-        _charging = false;
-        _error = result.message ?? _config.strings.cardDeclined;
-      });
+      _showRetryable(result.message ?? _config.strings.cardDeclined);
 
       return;
     }
@@ -255,7 +253,37 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       _error = null;
     });
 
-    _settle(await charge(card));
+    try {
+      _settle(await charge(card));
+    } catch (cause) {
+      _reportChargeFailure(cause);
+    }
+  }
+
+  /// Reports a charge that could not be made at all.
+  ///
+  /// `chargeSavedCard` is the integrator's own call to their own server, so an exception
+  /// here is a network that went away rather than a card that was refused. The payer is told
+  /// in their own language and left able to try again, and the cause goes to the log, where
+  /// developer text belongs.
+  void _reportChargeFailure(Object cause) {
+    debugPrint('GetPayIn payment sheet: $cause');
+    _showRetryable(_config.strings.cardDeclined);
+  }
+
+  /// Shows the payer what went wrong with this attempt, and lets them make another.
+  ///
+  /// Guarded on `mounted`: a charge can answer after the payer has closed the sheet, and a
+  /// sheet that is gone has nothing to show.
+  void _showRetryable(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _charging = false;
+      _error = message;
+    });
   }
 
   String get _amountLabel {
@@ -291,7 +319,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: _screenContent(),
+                children: _screenContent(context),
               ),
             ),
           ),
@@ -300,7 +328,11 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     );
   }
 
-  List<Widget> _screenContent() {
+  List<Widget> _screenContent(BuildContext context) {
+    if (_card.isAuthenticating) {
+      return _challenge(context);
+    }
+
     return switch (_screen) {
       _Screen.methods => _methods(),
       _Screen.selectCard => _selectCard(),
@@ -338,7 +370,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         OrDivider(label: strings.orPayUsing, style: _config.style),
         const SizedBox(height: 16),
       ],
-      if (saved.isNotEmpty) ...<Widget>[
+      if (saved.isNotEmpty && _selected != null) ...<Widget>[
         SectionLabel(strings.saved, style: _config.style),
         MethodRow(
           style: _config.style,
@@ -410,20 +442,28 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// The SDK frames that challenge inside the box and it has to stay framed exactly that
   /// way, so nothing is drawn over it and nothing around it can take the tap that answers
   /// it.
-  List<Widget> _challenge() {
+  List<Widget> _challenge(BuildContext context) {
     return <Widget>[
       SizedBox(
-        height: _challengeHeight,
+        height: _challengeHeightIn(context),
         child: CardBox(controller: _card, style: _config.style),
       ),
     ];
   }
 
-  List<Widget> _newCard() {
-    if (_card.isAuthenticating) {
-      return _challenge();
-    }
+  /// How tall the challenge can be drawn without pushing the sheet off the screen.
+  ///
+  /// The issuer's page asks for a code, so the keyboard comes up and takes most of a short
+  /// phone with it. A fixed height would then overflow, and the part of the page that
+  /// scrolled away would be the part with the field in it.
+  double _challengeHeightIn(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final room = media.size.height - media.viewInsets.bottom - _sheetChrome;
 
+    return math.max(math.min(_challengeHeight, room), 0);
+  }
+
+  List<Widget> _newCard() {
     return <Widget>[
       SheetHeader(
         style: _config.style,

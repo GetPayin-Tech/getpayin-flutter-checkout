@@ -1,12 +1,12 @@
 ---
-name: getpayin-flutter-checkout-dev
-description: Work on the getpayin_checkout package itself — its layering rules, the settings that fail silently on a phone, the invariants only review catches, and the verify loop. Use when editing, reviewing or testing files under lib/src/core, lib/src/webview, lib/src/sessions, lib/src/sheet or lib/src/widgets in the getpayin-flutter-checkout repository, when adding an export or option to it, or when a change touches the return-link reader, the presentation rule, the navigation classifier, the deep-link watcher, the payment sheet or the hosted-fields bridge.
+name: getpayin-checkout-dev
+description: Work on the getpayin_checkout package itself: its layering rules, the settings that fail silently on a phone, the invariants only review catches, and the verify loop. Use when editing, reviewing or testing files under lib/src/core, lib/src/webview, lib/src/sessions, lib/src/sheet or lib/src/widgets in the getpayin-flutter-checkout repository, when adding an export or option to it, or when a change touches the return-link reader, the presentation rule, the navigation classifier, the deep-link watcher, the payment sheet or the hosted-fields bridge.
 ---
 
 # Working on getpayin_checkout
 
 The maintainer's skill for the package itself. For integrating it into an app, use
-`getpayin-flutter-checkout` instead.
+`getpayin-checkout` instead.
 
 ## Before changing anything
 

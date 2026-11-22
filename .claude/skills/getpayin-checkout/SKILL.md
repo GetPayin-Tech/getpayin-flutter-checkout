@@ -1,6 +1,6 @@
 ---
-name: getpayin-flutter-checkout
-description: Take GetPayIn payments in a Flutter app with getpayin_checkout — Apple Pay, Google Pay and card, either on the hosted checkout or on a payment sheet built from PayLink's hosted card fields. Use when adding or debugging in-app payments in Flutter, when the user mentions GetPayIn, PayLink, Apple Pay or Google Pay in Flutter, a payment WebView, a payment return deep link, GetPayInProvider, GetPayInCheckout.open, GetPayInPaymentSheet, hosted card fields, PayLinkFieldsSession, or symptoms such as a missing wallet button, HTTP 403 from a checkout link, an unmatched route after paying, or an app that never receives the payment result.
+name: getpayin-checkout
+description: Take GetPayIn payments in a Flutter app with getpayin_checkout. Apple Pay, Google Pay and card, either on the hosted checkout or on a payment sheet built from PayLink's hosted card fields. Use when adding or debugging in-app payments in Flutter, when the user mentions GetPayIn, PayLink, Apple Pay or Google Pay in Flutter, a payment WebView, a payment return deep link, GetPayInProvider, GetPayInCheckout.open, GetPayInPaymentSheet, hosted card fields, PayLinkFieldsSession, or symptoms such as a missing wallet button, HTTP 403 from a checkout link, an unmatched route after paying, or an app that never receives the payment result.
 ---
 
 # GetPayIn checkout in Flutter

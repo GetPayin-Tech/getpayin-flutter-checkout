@@ -34,6 +34,7 @@ export 'src/sheet/fields_protocol.dart'
         FieldsReady,
         FieldsWalletError,
         FieldsWalletReady,
+        destroyCommand,
         parseFieldsEvent,
         payCommand,
         resultFromPayment,

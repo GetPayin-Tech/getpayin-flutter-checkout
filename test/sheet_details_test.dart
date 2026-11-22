@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 // Material moved to package:material_ui after Flutter 3.47, which does not exist in the
@@ -17,11 +18,12 @@ import 'support/fixtures.dart';
 /// The corners of the sheet: what it does with a retry, a back tap and a stray event.
 void main() {
   late FakeWebViewPlatform webView;
+  late FakeUrlLauncher launcher;
   late FakeDeepLinks links;
 
   setUp(() {
     webView = FakeWebViewPlatform.install();
-    FakeUrlLauncher.install();
+    launcher = FakeUrlLauncher.install();
     links = FakeDeepLinks();
     returnLinkWatcher = ReturnLinkWatcher(source: links.source);
   });
@@ -243,6 +245,219 @@ void main() {
       );
 
       expect(decision, NavigationDecision.prevent);
+    });
+  });
+
+  /*
+   * Seven tests written before the fixes they describe, from a review of the sheet. Each
+   * one states what a payer should be able to do, and each failed before the change that
+   * made it pass.
+   */
+  group('the sheet under duress', () {
+    PaymentSheetConfiguration configuration({
+      List<SavedCard> savedCards = const <SavedCard>[],
+      Future<CheckoutResult> Function(SavedCard card)? chargeSavedCard,
+      String origin = testOrigin,
+    }) {
+      return PaymentSheetConfiguration(
+        session: testFieldsSession(origin: origin),
+        fieldsPageUrl: testFieldsPageUrl,
+        returnUrl: testReturnUrl,
+        expectedInvoiceId: 90210,
+        amountLabel: r'$97.42',
+        wallets: const <PaymentWallet>[PaymentWallet.googlePay],
+        savedCards: savedCards,
+        chargeSavedCard: chargeSavedCard,
+      );
+    }
+
+    Future<Future<CheckoutResult>> open(
+      WidgetTester tester,
+      PaymentSheetConfiguration config,
+    ) async {
+      final completer = Completer<CheckoutResult>();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => completer
+                  .complete(GetPayInPaymentSheet.show(context, config)),
+              child: const Text('checkout'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('checkout'));
+      await pumpFrames(tester);
+
+      return completer.future;
+    }
+
+    void postToCard(Map<String, Object?> event) =>
+        webView.controllers.first.post(jsonEncode(event));
+
+    Future<void> completeTheCard(WidgetTester tester) async {
+      postToCard(<String, Object?>{
+        'type': 'ready',
+        'amountMinor': 9742,
+        'currency': 'USD',
+      });
+
+      for (final field in <String>['number', 'securityCode', 'expiry']) {
+        postToCard(<String, Object?>{
+          'type': 'change',
+          'field': field,
+          'valid': true,
+          'empty': false,
+        });
+      }
+
+      await pumpFrames(tester);
+    }
+
+    testWidgets(
+        'sends the payer to the hosted checkout when the page is on the '
+        'wrong origin', (tester) async {
+      await open(
+          tester, configuration(origin: 'https://elsewhere.example.com'));
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(launcher.launches.single.$1, testCheckoutUrl);
+    });
+
+    testWidgets(
+        'lets the payer try again when your server throws while charging a '
+        'saved card', (tester) async {
+      await open(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (_) async =>
+              throw StateError('the network went away'),
+        ),
+      );
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(
+          find.text(const PaymentSheetStrings().cardDeclined), findsOneWidget);
+      expect(find.text(r'Pay $97.42'), findsOneWidget);
+    });
+
+    testWidgets(
+        'says nothing to a sheet the payer closed while the charge was '
+        'running', (tester) async {
+      final release = Completer<CheckoutResult>();
+
+      await open(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (_) => release.future,
+        ),
+      );
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.tapAt(const Offset(10, 10));
+      await pumpFrames(tester);
+
+      release.complete(
+        const CheckoutResult(
+            status: CheckoutStatus.notPaid, message: 'declined'),
+      );
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ignores what the page says after the card box is disposed', (
+      tester,
+    ) async {
+      final controller = CardFieldsController(
+        session: testFieldsSession(),
+        pageUrl: testFieldsPageUrl,
+      );
+
+      expect(controller.webView, isNotNull);
+      await tester.pump();
+
+      final page = webView.controllers.first;
+
+      controller.dispose();
+      page.post(jsonEncode(<String, Object?>{'type': 'charging'}));
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(page.scripts.join(), contains('destroy'));
+    });
+
+    testWidgets(
+        'shows the issuer challenge even when the payer went back first', (
+      tester,
+    ) async {
+      await open(tester, configuration());
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(const PaymentSheetStrings().back));
+      await pumpFrames(tester);
+
+      postToCard(<String, Object?>{'type': 'authenticating'});
+      await pumpFrames(tester);
+
+      expect(find.text(const PaymentSheetStrings().newPaymentMethod),
+          findsNothing);
+      expect(find.byType(WebViewWidget), findsOneWidget);
+    });
+
+    testWidgets('keeps the challenge inside the screen when the keyboard is up',
+        (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1080, 1400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+
+      await open(tester, configuration());
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      postToCard(<String, Object?>{'type': 'authenticating'});
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('offers no saved card when every one of them has expired', (
+      tester,
+    ) async {
+      await open(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[
+            SavedCard(
+                id: 'pm_1', last4: '7492', expiryMonth: 1, expiryYear: 2020),
+            SavedCard(
+                id: 'pm_2', last4: '8216', expiryMonth: 2, expiryYear: 2021),
+          ],
+          chargeSavedCard: (_) async =>
+              const CheckoutResult(status: CheckoutStatus.paid),
+        ),
+      );
+
+      expect(find.text(const PaymentSheetStrings().saved), findsNothing);
+      expect(find.textContaining('•••• '), findsNothing);
+      expect(find.text(const PaymentSheetStrings().newCard), findsOneWidget);
     });
   });
 }

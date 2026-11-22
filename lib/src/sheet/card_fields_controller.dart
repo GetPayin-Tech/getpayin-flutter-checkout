@@ -49,6 +49,7 @@ class CardFieldsController extends ChangeNotifier {
   /// The controller the card box renders with.
   WebViewController get webView => _webView;
 
+  bool _disposed = false;
   bool _ready = false;
   bool _authenticating = false;
   bool _charging = false;
@@ -101,6 +102,30 @@ class CardFieldsController extends ChangeNotifier {
     await _webView.runJavaScript(payCommand());
   }
 
+  /// Takes the page down with the box.
+  ///
+  /// A charge can answer after the payer has closed the sheet, and the channel registered
+  /// here would deliver it to a notifier that is gone. Nothing is received after this, and
+  /// the page is told to let go of its fields and the capture context behind them.
+  @override
+  void dispose() {
+    _disposed = true;
+    unawaited(_letThePageGo());
+    super.dispose();
+  }
+
+  /// Asks the page to tear its fields down, and does not care if it cannot.
+  ///
+  /// The web view may already be gone by the time this runs, which is the ordinary case
+  /// when the whole sheet is being disposed, and nothing useful follows from saying so.
+  Future<void> _letThePageGo() async {
+    try {
+      await _webView.runJavaScript(destroyCommand());
+    } catch (_) {
+      return;
+    }
+  }
+
   WebViewController _build() {
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -146,7 +171,7 @@ class CardFieldsController extends ChangeNotifier {
   void _receive(String raw) {
     final event = parseFieldsEvent(raw);
 
-    if (event == null) {
+    if (event == null || _disposed) {
       return;
     }
 
@@ -179,6 +204,10 @@ class CardFieldsController extends ChangeNotifier {
   }
 
   void _fail(FieldsError error) {
+    if (_disposed) {
+      return;
+    }
+
     _charging = false;
     _authenticating = false;
     _errorMessage = error.message;

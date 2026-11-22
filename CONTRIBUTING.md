@@ -99,6 +99,16 @@ The docs are split by job, and a change usually touches one of them:
 | `doc/troubleshooting.md`  | Symptom-first. Add to it whenever you learn a new silent failure. |
 | `doc/architecture.md`     | For contributors, including what differs from the Expo package.   |
 
+## Skills
+
+Three live in `.claude/skills/`, and the Skill tool loads them when this repository is open:
+
+| Skill                      | For                                                                  |
+| -------------------------- | -------------------------------------------------------------------- |
+| `getpayin-checkout`        | Integrating the package into an app.                                 |
+| `getpayin-checkout-dev`    | Working on the package: layering, invariants, the verify loop.       |
+| `getpayin-checkout-tdd`    | Writing the test first, the fakes, and why a widget test hangs.      |
+
 ## Commits and pull requests
 
 Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`). Say what breaks if the change is

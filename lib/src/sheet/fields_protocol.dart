@@ -228,6 +228,13 @@ String startFieldsCommand({
   return 'window.__paylinkHost && window.__paylinkHost.start($config);';
 }
 
+/// The JavaScript that takes the fields down.
+///
+/// The page holds a mounted fields instance and the capture context behind it, so a box
+/// that goes away without saying so leaves both running for as long as the web view lives.
+String destroyCommand() =>
+    'window.__paylinkHost && window.__paylinkHost.destroy();';
+
 /// The JavaScript that charges the card the payer entered.
 ///
 /// It carries no expiry: the expiry input sits inside the card box with the two hosted

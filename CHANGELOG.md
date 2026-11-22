@@ -31,6 +31,27 @@ All notable changes to this package are documented here. The format follows
 - `readReturnClaim`, the reading of a return link before any rule about what it may mean,
   which is what lets a card save and a payment share one parser.
 
+### Fixed
+
+Six faults in the payment sheet, each found by a review and each fixed after the test that
+proves it was there:
+
+- A `chargeSavedCard` that threw left the pay button spinning for ever, with nothing said.
+  The usual cause is the integrator's own backend being unreachable. The payer is now told
+  and can try again.
+- Closing the sheet while a saved-card charge was running called `setState` on a state that
+  had gone.
+- The card box never told its page to let go, so a charge that answered after the sheet
+  closed reached a disposed notifier, and the fields and their capture context outlived the
+  sheet.
+- A payer who went back from the card form before the issuer answered never saw the 3-D
+  Secure challenge: it was drawn only on the card screen, so the attempt could only time out
+  as `authentication_abandoned`. The challenge now takes the sheet whatever screen it is on.
+- That challenge used a fixed height, which overflowed once the keyboard came up on a short
+  phone, clipping away the part of the issuer's page with the field in it.
+- A saved-card list with nothing chargeable left in it drew an empty row that looked
+  selected, beside a dead pay button.
+
 ### Changed
 
 - The package is `getpayin_checkout`, so an app writes
