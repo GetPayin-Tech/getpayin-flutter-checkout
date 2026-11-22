@@ -139,6 +139,22 @@ to load a page from anywhere else rather than showing an empty box.
 **A charge is idempotent per payment.** PayLink holds it behind a per-payment lock, so a
 double-tapped pay button is refused with `in_progress` rather than charged twice.
 
+## Saving a card
+
+A vaulted card's token never travels through the app. The app-return bridge builds exactly
+`success`, `invoice_id`, `invoice_status`, `message` and `signature` — there is no
+`card_token` on it, and a token that unlocks a stored card has no business on a public app
+scheme that anything on the phone can invoke.
+
+It reaches your server on the `card_token.created` webhook, and charging it is a call your
+server signs with your hash token. So a stolen return link cannot save a card, cannot read
+one, and cannot spend one.
+
+The verification run itself is a real authorization — one unit of currency, released
+straight away — which is why `GetPayInCheckout.saveCard` reads the link as a save rather
+than as a payment, and why a save still has to be confirmed on your server before you show
+the payer a card they can use.
+
 ## Reading the return link
 
 The link is read by exact field name (`success`, `invoice_id`, `invoice_status`, `message`),

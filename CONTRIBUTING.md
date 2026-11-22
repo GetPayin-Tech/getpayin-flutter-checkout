@@ -91,6 +91,8 @@ The docs are split by job, and a change usually touches one of them:
 | `README.md`               | What it is, install, a quick start, and links out. Keep it short. |
 | `doc/setup.md`            | Prerequisites and the native configuration.                       |
 | `doc/taking-payments.md`  | The day-to-day integration.                                       |
+| `doc/payment-sheet.md`    | The sheet, hosted card fields, and what they need.                |
+| `doc/saving-a-card.md`    | Vaulting a card, and why the token never reaches the app.         |
 | `doc/google-pay.md`       | The Android approval flow.                                        |
 | `doc/api.md`              | Every export. Update it whenever the public surface changes.      |
 | `doc/security.md`         | The threat model.                                                 |

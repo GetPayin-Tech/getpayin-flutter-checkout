@@ -1,3 +1,4 @@
+import 'card_save.dart';
 import 'core/presentation.dart';
 import 'core/session_guard.dart';
 import 'core/validate.dart';
@@ -60,6 +61,39 @@ abstract final class GetPayInCheckout {
       () => presentation == CheckoutPresentation.inApp
           ? _runInAppCheckout(request)
           : runBrowserCheckout(request),
+    );
+  }
+
+  /// Opens a hosted card tokenization and completes once the payer has finished.
+  ///
+  /// Pass the `tokenization_url` your server received from
+  /// `POST /v2/integration/tokens/init`. It is a hosted run like any other — the payer
+  /// enters the card on PayLink's own page, where one unit of currency is authorized to
+  /// prove the card is live, the card is vaulted, and the authorization is released — so it
+  /// is presented exactly as a checkout is, and everything `open` refuses, this refuses.
+  ///
+  /// It is read differently, though. A verification leaves its invoice unpaid on purpose,
+  /// and the payment rules would call that a failure, so the result says whether the **card
+  /// was saved** rather than whether an invoice was paid.
+  ///
+  /// The token is not in the result and never reaches the app: it arrives on your server
+  /// with the `card_token.created` webhook, which is also what makes the save real.
+  ///
+  /// `options.expectedInvoiceId` is the verification's own invoice, which
+  /// [invoiceIdInCheckoutUrl] reads off the `tokenization_url` when your server did not pass
+  /// it on. Give the screen a title of its own: the payer is saving a card, not paying.
+  ///
+  /// Hosted card fields cannot do this, so there is no payment-sheet equivalent: a save is
+  /// always a hosted run.
+  static Future<CardSaveResult> saveCard(
+    String tokenizationUrl,
+    OpenCheckoutOptions options,
+  ) async {
+    final checkout = await open(tokenizationUrl, options);
+
+    return cardSaveFromCheckout(
+      checkout,
+      expectedInvoiceId: options.expectedInvoiceId,
     );
   }
 

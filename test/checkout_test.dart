@@ -212,4 +212,73 @@ void main() {
       expect(GetPayInCheckout.busy, isFalse);
     });
   });
+
+  group('GetPayInCheckout.saveCard', () {
+    /// What a finished tokenization run comes back on: vaulted, hold released, unpaid.
+    final savedLink =
+        returnLink('success=1&invoice_id=90210&invoice_status=VOIDED');
+
+    test('reads a tokenization run as a card save, not as a payment', () async {
+      presenter = (request) async {
+        presented.add(request);
+
+        return resolveReturn(savedLink, expectedInvoiceId: 90210);
+      };
+      registerPresenter(presenter);
+
+      final result = await GetPayInCheckout.saveCard(
+        testCheckoutUrl,
+        const OpenCheckoutOptions(
+          returnUrl: testReturnUrl,
+          expectedInvoiceId: 90210,
+          title: 'Save your card',
+        ),
+      );
+
+      expect(result.status, CardSaveStatus.saved);
+      expect(result.verificationStatus, 'VOIDED');
+      expect(presented.single.options.title, 'Save your card');
+      expect(GetPayInCheckout.busy, isFalse);
+    });
+
+    test('refuses a tokenization URL the hosted run could not be opened with',
+        () async {
+      await expectLater(
+        GetPayInCheckout.saveCard(
+          'myapp://tokenize',
+          const OpenCheckoutOptions(returnUrl: testReturnUrl),
+        ),
+        throwsA(isA<GetPayInConfigError>()),
+      );
+    });
+
+    test('reports a closed card-save screen as cancelled', () async {
+      presenter = (request) async => cancelledResult(closedByPayerMessage);
+      registerPresenter(presenter);
+
+      final result = await GetPayInCheckout.saveCard(
+        testCheckoutUrl,
+        const OpenCheckoutOptions(returnUrl: testReturnUrl),
+      );
+
+      expect(result.status, CardSaveStatus.cancelled);
+      expect(result.message, closedByPayerMessage);
+    });
+
+    test('refuses a run that came back naming another verification', () async {
+      presenter = (request) async => resolveReturn(
+            returnLink('success=1&invoice_id=5001&invoice_status=VOIDED'),
+          );
+      registerPresenter(presenter);
+
+      final result = await GetPayInCheckout.saveCard(
+        testCheckoutUrl,
+        const OpenCheckoutOptions(
+            returnUrl: testReturnUrl, expectedInvoiceId: 90210),
+      );
+
+      expect(result.status, CardSaveStatus.notSaved);
+      expect(result.code, CheckoutResultCode.wrongInvoice);
+    });
+  });
 }

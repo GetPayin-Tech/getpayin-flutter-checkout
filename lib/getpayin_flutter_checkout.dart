@@ -11,6 +11,13 @@
 /// `invoice.paid` webhook on your own server before you fulfil an order.
 library;
 
+export 'src/card_save.dart'
+    show
+        CardSaveResult,
+        CardSaveStatus,
+        cardSaveFromCheckout,
+        invoiceIdInCheckoutUrl,
+        readCardSave;
 export 'src/checkout.dart' show GetPayInCheckout;
 export 'src/sheet/amount.dart' show formatAmount;
 export 'src/sheet/card_fields_controller.dart' show CardFieldsController;
@@ -43,7 +50,12 @@ export 'src/core/navigation.dart'
     show NavigationContext, NavigationVerdict, classifyNavigation;
 export 'src/core/presentation.dart' show resolvePresentation;
 export 'src/core/return_url.dart'
-    show cancelledResult, matchesReturnUrl, readCheckoutResult, resolveReturn;
+    show
+        cancelledResult,
+        matchesReturnUrl,
+        readCheckoutResult,
+        readReturnClaim,
+        resolveReturn;
 export 'src/errors.dart';
 export 'src/payment_return_redirect.dart' show PaymentReturnRedirect;
 export 'src/types.dart';

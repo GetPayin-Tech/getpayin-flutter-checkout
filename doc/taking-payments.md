@@ -126,6 +126,13 @@ After a `notPaid`, create a **new** payment on your server and open the new
 `checkoutUrl`. Do not reopen the old one: a checkout link is for one attempt, and its
 invoice is already in a terminal state.
 
+## Saving the card for next time
+
+A payment can vault the card as it goes — `POST /v2/integration/init` with
+`tokenize: true` — and a card can be vaulted on its own, with no sale, through
+`/v2/integration/tokens/init` and `GetPayInCheckout.saveCard`. A save is not a payment and
+is not read like one, so it has its own guide: [Saving a card](saving-a-card.md).
+
 ## Where the checkout is drawn
 
 You do not choose this per call; the platform does, with one setting for Android:

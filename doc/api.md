@@ -37,6 +37,48 @@ non-finite number are refused with `GetPayInConfigError`. `null` means "no invoi
 to" and turns the check off, which is also what a field your server left out of its JSON
 looks like — Dart cannot tell those apart.
 
+## `GetPayInCheckout.saveCard(tokenizationUrl, options)`
+
+```dart
+static Future<CardSaveResult> saveCard(
+  String tokenizationUrl,
+  OpenCheckoutOptions options,
+)
+```
+
+Opens a hosted card tokenization — the `tokenization_url` from
+`POST /v2/integration/tokens/init` — and completes once the payer has finished. Presented
+exactly as a checkout is, and refusing exactly what `open` refuses, but read as a card save:
+a verification run leaves its invoice unpaid on purpose, which the payment rules would call
+a failure.
+
+The token is not in the result and never reaches the app. It arrives on your server with the
+`card_token.created` webhook. See [Saving a card](saving-a-card.md).
+
+### `CardSaveResult`
+
+```dart
+class CardSaveResult {
+  final CardSaveStatus status;      // saved | notSaved | cancelled
+  final String? invoiceId;          // the verification invoice
+  final String? verificationStatus; // AUTHORIZED, VOIDED, CAPTURED — never PAID
+  final CheckoutResultCode? code;   // unreadableReturnLink or wrongInvoice, or null
+  final String? message;
+  final String? returnUrl;
+
+  bool get isSaved;
+}
+```
+
+## `invoiceIdInCheckoutUrl(url)`
+
+```dart
+String? invoiceIdInCheckoutUrl(String url)
+```
+
+The invoice id a hosted `checkout_url` or `tokenization_url` names, so a run can pass
+`expectedInvoiceId` and refuse a return link that belongs to another one.
+
 ## `GetPayInCheckout.presentationFor(...)`
 
 ```dart
@@ -257,7 +299,10 @@ diagnostics. You do not need them for a normal integration.
 
 | Export                                                        | What it does                                                                                                 |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `readReturnClaim(url)`                                        | What a return link says, before any rule about what it is allowed to mean.                                   |
 | `readCheckoutResult(url)`                                     | Turns GetPayIn's return link (`success`, `invoice_id`, `invoice_status`, `message`) into a `CheckoutResult`. |
+| `readCardSave(url, {expectedInvoiceId})`                      | The same link, read as a card save rather than as a payment.                                                 |
+| `cardSaveFromCheckout(result, {expectedInvoiceId})`           | Reads a card save out of a `CheckoutResult` the package already produced.                                    |
 | `resolveReturn(url, {expectedInvoiceId})`                     | The same, bound to an invoice. Both presentations use this.                                                  |
 | `matchesReturnUrl(url, returnUrl)`                            | True when `url` is the return link, whatever its query.                                                      |
 | `cancelledResult([message])`                                  | The result a payer who closed the checkout gets.                                                             |

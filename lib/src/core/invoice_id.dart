@@ -61,3 +61,19 @@ String? invoiceIdFrom(Object? value) {
 
   return null;
 }
+
+/// True when a run that reported [reported] belongs to the invoice [expected] names.
+///
+/// Fails closed: a value that cannot be an invoice id matches nothing, so a claim bound to
+/// one is refused rather than taken at its word. Both sides go through [invoiceIdFrom] and
+/// [normalizeInvoiceId], because the server reports the id as a number and the link carries
+/// it as text.
+bool invoiceIdMatches({required Object? expected, required String? reported}) {
+  final wanted = invoiceIdFrom(expected);
+
+  if (wanted == null || reported == null) {
+    return false;
+  }
+
+  return normalizeInvoiceId(reported) == wanted;
+}

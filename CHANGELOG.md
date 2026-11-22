@@ -8,6 +8,18 @@ All notable changes to this package are documented here. The format follows
 
 ### Added
 
+- `GetPayInCheckout.saveCard`: vault a card through a hosted tokenization run, read as a
+  card save rather than as a payment. A verification authorizes one unit, vaults the card
+  and releases the hold, so its invoice ends `VOIDED` and the payment rules would have
+  called every successful save a failure. `CardSaveResult` says `saved`, `notSaved` or
+  `cancelled`, and carries the verification's own state. The token is not on the return link
+  and never reaches the app; it arrives with the `card_token.created` webhook. See
+  [Saving a card](doc/saving-a-card.md).
+- `invoiceIdInCheckoutUrl`, which reads the invoice id out of a `checkout_url` or
+  `tokenization_url` so a run can be bound to its own result.
+- `readReturnClaim`, the reading of a return link before any rule about what it may mean,
+  which is what lets a card save and a payment share one parser.
+
 - `GetPayInPaymentSheet`: the same payment taken on a sheet in your own app — wallet button,
   saved cards, card form, one pay button — running on PayLink's hosted card fields. The card
   number and security code are still rendered by the gateway, on a page you host at your

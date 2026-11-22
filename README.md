@@ -118,6 +118,7 @@ hosted checkout when the fields cannot run.
 | [Setup](doc/setup.md)                            | Prerequisites, install, the provider, routing, and the iOS and Android configuration.      |
 | [Taking payments](doc/taking-payments.md)        | Opening a checkout, reading the result, confirming it, retries, and using your own screen. |
 | [The payment sheet](doc/payment-sheet.md)        | The checkout as a sheet in your app, on PayLink's hosted card fields.                      |
+| [Saving a card](doc/saving-a-card.md)            | Vaulting a card for next time, and why the token never reaches the app.                    |
 | [Google Pay on Android](doc/google-pay.md)       | Getting Google's approval for in-app Google Pay, and the device requirements.              |
 | [API reference](doc/api.md)                      | Every export, option, type and error.                                                      |
 | [Security model](doc/security.md)                | What the package guarantees, what it cannot, and what your server must do.                 |

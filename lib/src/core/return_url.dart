@@ -150,13 +150,14 @@ CheckoutResult _bindToInvoiceStatus(CheckoutResult result) {
   );
 }
 
-/// Turns a return link into a result.
+/// What the link says, before any rule about what it is allowed to mean.
 ///
-/// A link whose status cannot be read becomes not paid with an explanatory message and
+/// A link whose fields cannot be read becomes not paid with
 /// [CheckoutResultCode.unreadableReturnLink], never paid: the app is not allowed to decide
-/// that a payment succeeded, and the `invoice.paid` webhook on your server is what settles
-/// it either way.
-CheckoutResult readCheckoutResult(String url) {
+/// that something succeeded. Everything else is reported as sent, so a reader that is not
+/// settling a payment — a card save, where the invoice is meant to stay unpaid — can decide
+/// for itself what the claim is worth.
+CheckoutResult readReturnClaim(String url) {
   final query = parseUrl(url)?.query ?? '';
   final params = readQuery(query);
 
@@ -170,15 +171,22 @@ CheckoutResult readCheckoutResult(String url) {
     return _unreadableResult(url);
   }
 
-  return _bindToInvoiceStatus(
-    CheckoutResult(
-      status: status,
-      invoiceId: _readField(params, _invoiceKey),
-      invoiceStatus: _readField(params, _invoiceStatusKey),
-      message: _readMessage(params),
-      returnUrl: url,
-    ),
+  return CheckoutResult(
+    status: status,
+    invoiceId: _readField(params, _invoiceKey),
+    invoiceStatus: _readField(params, _invoiceStatusKey),
+    message: _readMessage(params),
+    returnUrl: url,
   );
+}
+
+/// Turns a return link into a payment result.
+///
+/// The claim the link makes, with the one rule every payment claim goes through: an invoice
+/// that is not paid in full is not an order to fulfil. The `payment.*` webhook on your
+/// server is what settles it either way.
+CheckoutResult readCheckoutResult(String url) {
+  return _bindToInvoiceStatus(readReturnClaim(url));
 }
 
 /// Refuses a paid result that does not belong to the invoice the checkout was opened for.
@@ -199,11 +207,8 @@ CheckoutResult _bindToInvoice(
     return result;
   }
 
-  final expected = invoiceIdFrom(expectedInvoiceId);
-  final claimed = result.invoiceId;
-  final reported = claimed == null ? null : normalizeInvoiceId(claimed);
-
-  if (expected != null && reported == expected) {
+  if (invoiceIdMatches(
+      expected: expectedInvoiceId, reported: result.invoiceId)) {
     return result;
   }
 

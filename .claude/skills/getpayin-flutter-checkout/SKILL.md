@@ -115,7 +115,12 @@ When integrating:
    twice and the checkout answers HTTP 403.
 9. **Add the `go_router` redirect** if the project uses go_router. Check for a `GoRouter`
    to tell.
-10. **Wire the server side**: `POST /api/v2/integration/init` to create, the `payment.*`
+10. **Saving a card is its own call.** `/v2/integration/tokens/init` gives a
+    `tokenization_url`; open it with `GetPayInCheckout.saveCard`, never with `open`. A
+    verification run leaves its invoice unpaid on purpose, so `open` would report every
+    successful save as `notPaid`. The token is never on the return link — it arrives with
+    the `card_token.created` webhook. The payment sheet cannot save a card at all.
+11. **Wire the server side**: `POST /api/v2/integration/init` to create, the `payment.*`
     webhook to confirm. Deliver only when the verified event says success, the invoice
     status is `PAID`, and the invoice is one that server created.
 
@@ -182,5 +187,5 @@ Google Pay is never offered on iPhone: Google allows it only in Safari.
 ## Full documentation
 
 In the package repository: `doc/setup.md`, `doc/taking-payments.md`,
-`doc/payment-sheet.md`, `doc/google-pay.md`, `doc/api.md`, `doc/security.md`,
-`doc/troubleshooting.md`.
+`doc/payment-sheet.md`, `doc/saving-a-card.md`, `doc/google-pay.md`, `doc/api.md`,
+`doc/security.md`, `doc/troubleshooting.md`.

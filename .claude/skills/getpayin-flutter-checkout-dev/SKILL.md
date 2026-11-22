@@ -55,41 +55,47 @@ Writing a second copy of one of these is the bug.
    Both the return link and a hosted-fields charge end at `settlePaidClaim`: only `PAID` is
    paid, and a paid claim for another invoice is refused. A third source must go through it
    too.
-2. **The launch link never settles a later checkout.** The initial link is a _pull_ of
+2. **One parser, two readings.** `readReturnClaim` reports what a link says;
+   `readCheckoutResult` adds the rule that an unpaid invoice is not a payment, and
+   `readCardSave` deliberately does not — a verification run is _meant_ to end unpaid, so
+   reading a save with the payment rule would call every success a failure. Never add a
+   second parser: the strictness that refuses a repeated or ambiguous field has to be the
+   same for both, because it is the same signed link.
+3. **The launch link never settles a later checkout.** The initial link is a _pull_ of
    persistent state and its values are consumed once per process; the link stream is a
    _push_ and is not deduplicated across sessions. Do not collapse the two: the asymmetry is
    what stops a forged cold-start link becoming the next checkout's paid result, while still
    letting a byte-identical link settle a second genuine checkout.
-3. **`expectedInvoiceId` downgrades only a paid result.** Rewriting a `notPaid` or
+4. **`expectedInvoiceId` downgrades only a paid result.** Rewriting a `notPaid` or
    `cancelled` would lose the reason the payer was given.
-4. **A script scheme, any scheme the app answers to, and anything with no part in paying
+5. **A script scheme, any scheme the app answers to, and anything with no part in paying
    never reach the launcher.** `classifyNavigation` returns `block` for all three. The app's
    schemes come from `declareHostAppSchemes`, because Flutter has no app config to read.
-5. **A frame inside the checkout page can only ever load.** `isTopFrame` is required, never
+6. **A frame inside the checkout page can only ever load.** `isTopFrame` is required, never
    defaulted: a 3-D Secure page knows the real invoice id, so an `<iframe>` aimed at the
    return link would report a payment nobody made, and `expectedInvoiceId` is no defence.
    `webview_flutter` reports `isMainFrame` on both platforms, so unlike the Expo package the
    rule holds on Android too. Keep it that way.
-6. **No script on a surface that can show a wallet.** WebKit turns Apple Pay off on any page
+7. **No script on a surface that can show a wallet.** WebKit turns Apple Pay off on any page
    the host app has scripted. The hosted checkout view and `WalletSurface` register no
    channel and never run JavaScript; `WalletSurface` answers by navigating to the return
    link. A test asserts it. The sheet's card box _is_ scripted, deliberately: it shows no
    wallet, and the alternative would put the client token in the page's URL.
-7. **Both sides of an invoice comparison go through `core/invoice_id.dart`.** The server
+8. **Both sides of an invoice comparison go through `core/invoice_id.dart`.** The server
    sends a number and the link carries text.
-8. **A payer never sees developer text.** `buildCheckoutSource`'s `error` names an option
+9. **A payer never sees developer text.** `buildCheckoutSource`'s `error` names an option
    and its value, so it goes to `onLoadError`'s second argument and the payer gets
    `loadErrorMessage`. Blank option text falls back through `core/text.dart`.
-9. **The navigation handler is keyed to the checkout, not the callbacks.** It completes at
+10. **The navigation handler is keyed to the checkout, not the callbacks.** It completes at
    most once; rebuilding it on an ordinary rebuild resets that latch and reports one payment
    twice.
-10. **A failed load always shows a way out.** Otherwise the `open()` future never settles and
+11. **A failed load always shows a way out.** Otherwise the `open()` future never settles and
     `SessionGuard` reports busy for the rest of the process.
-11. **Android's Payment Request switch is set before the page loads.** Set after, the payer
+12. **Android's Payment Request switch is set before the page loads.** Set after, the payer
     gets a checkout with no Google Pay button and nothing in the log.
-12. **The card box is built when the sheet opens, not when the payer asks for it.** It has a
+13. **The card box is built when the sheet opens, not when the payer asks for it.** It has a
     page to load and fields to mount; lazily built, none of that starts until it is too late.
-13. **A fatal fields failure closes the sheet after the frame, never during it.** A route
+14. **A fatal fields failure closes the sheet after the frame, never during it.** A route
     cannot be popped while it is being built.
 
 ## House style
