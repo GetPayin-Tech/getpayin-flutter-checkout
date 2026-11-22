@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../platform.dart';
 import '../types.dart';
 import '../webview/app_schemes.dart';
 import '../webview/navigation_handler.dart';
+import '../webview/platform_settings.dart';
+import '../webview/wallet_settings.dart';
 import 'fields_page.dart';
 import 'fields_session.dart';
 import 'saved_card.dart';
@@ -76,8 +81,26 @@ class _WalletSurfaceState extends State<WalletSurface> {
     ..setBackgroundColor(const Color(0x00000000))
     ..setNavigationDelegate(
       NavigationDelegate(onNavigationRequest: _onNavigationRequest),
-    )
-    ..loadRequest(
+    );
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  /// Turns the platform's wallet support on, then loads the page.
+  ///
+  /// In that order, and nowhere else: Android reads its Payment Request switch at the next
+  /// page load, so a surface that loads first renders a button-shaped nothing. The whole
+  /// point of this surface is the button, which makes this the one call it cannot skip.
+  Future<void> _load() async {
+    await walletSettingsApplier(
+      _webView,
+      buildCheckoutWebViewSettings(currentPlatformName()),
+    );
+
+    await _webView.loadRequest(
       Uri.parse(
         walletPageUrl(
           pageUrl: widget.pageUrl,
@@ -87,6 +110,7 @@ class _WalletSurfaceState extends State<WalletSurface> {
       ),
       headers: widget.pageHeaders,
     );
+  }
 
   NavigationDecision _onNavigationRequest(NavigationRequest request) {
     final allowed = _handler(

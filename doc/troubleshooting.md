@@ -30,6 +30,16 @@ The link's signature no longer matches what was signed.
    `order_title` can break the signature. Keep titles to letters, numbers and spaces, and
    check with GetPayIn support whether the backend fix for this has shipped.
 
+## The wallet slot is empty on the payment sheet
+
+The sheet draws the wallet from `wallets` in the configuration, which says what your app
+offers, not what the company sells. When PayLink has no wallet to give, the surface loads
+and renders nothing, leaving a button-sized gap above the divider.
+
+Check the two in order: the company's subscription to that wallet, then everything in
+[No Google Pay button on Android](#no-google-pay-button-on-android). Pass an empty
+`wallets` list to drop the slot entirely.
+
 ## No Apple Pay button on iPhone
 
 1. **Something added a script to the page.** WebKit turns Apple Pay off on any page the host
@@ -55,6 +65,11 @@ In the app's own screen (`googlePayInApp: true`):
 
 In the browser sheet (`googlePayInApp: false`): the payer has no card in Google Pay, or the
 sheet opened in a browser without Google Pay support.
+
+On the payment sheet, the same four apply — the wallet is drawn in a web view there too —
+and one more: the company has to sell the wallet. PayLink mints a wallets capture context
+only for a company subscribed to Google Pay, and answers with no `wallets` block
+otherwise, at which point the SDK reports no wallet and the button never arrives.
 
 ## A blank white checkout screen
 

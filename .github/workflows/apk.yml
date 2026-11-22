@@ -31,7 +31,10 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          # 21, not 17: Android Lint's own Kotlin compiler calls List.removeLast(), which
+          # arrived with Java 21's sequenced collections, so lintVitalAnalyzeRelease dies
+          # with NoSuchMethodError on anything older and takes the release build with it.
+          java-version: '21'
 
       - uses: subosito/flutter-action@v2
         with:

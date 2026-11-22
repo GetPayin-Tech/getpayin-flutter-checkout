@@ -5,7 +5,6 @@ import 'dart:async';
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../core/messages.dart';
 import '../core/text.dart';
@@ -15,6 +14,7 @@ import '../webview/app_schemes.dart';
 import '../webview/checkout_source.dart';
 import '../webview/external_link.dart';
 import '../webview/load_failure.dart';
+import '../webview/wallet_settings.dart';
 import '../webview/navigation_handler.dart';
 import '../webview/platform_settings.dart';
 import 'checkout_style.dart';
@@ -169,38 +169,12 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
     CheckoutWebViewSettings settings,
     String uri,
   ) async {
-    await _applyWalletSettings(controller, settings);
+    await walletSettingsApplier(controller, settings);
 
     try {
       await controller.loadRequest(Uri.parse(uri));
     } catch (cause) {
       _reportLoadFailure('$cause');
-    }
-  }
-
-  /// Turns on the platform's wallet support, if it has a switch and this build has it.
-  ///
-  /// A failure is swallowed rather than surfaced: an older WebView that does not know the
-  /// feature still takes card payments, and the payer is better served by a checkout with
-  /// no Google Pay button than by an error instead of a checkout.
-  Future<void> _applyWalletSettings(
-    WebViewController controller,
-    CheckoutWebViewSettings settings,
-  ) async {
-    final platform = controller.platform;
-
-    if (!settings.paymentRequestEnabled ||
-        platform is! AndroidWebViewController) {
-      return;
-    }
-
-    try {
-      if (await platform
-          .isWebViewFeatureSupported(WebViewFeatureType.paymentRequest)) {
-        await platform.setPaymentRequestEnabled(true);
-      }
-    } catch (_) {
-      return;
     }
   }
 
