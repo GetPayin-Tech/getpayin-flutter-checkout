@@ -169,6 +169,14 @@ over: `CardFieldsController` owns the card box and reports `FieldsEvent`s,
 `WalletSurface` is the wallet button, `resultFromPayment` turns PayLink's answer into a
 `CheckoutResult` by the same rules, and `buildFieldsPageHtml` writes the page.
 
+## The upstream contract
+
+This guide covers the Flutter side. PayLink's own **Hosted Card Fields — Integration
+Guide**, served at `/docs/payment_integration/HOSTED_FIELDS_GUIDE.md` on your PayLink host,
+is the authority on the API behind it: the `/init` call, the `fields/*` endpoints, the error
+codes, the CSP a web page needs, and what the client token can and cannot do. When the two
+disagree, it wins.
+
 ## Next
 
 [API reference](api.md) · [Security model](security.md) · [Troubleshooting](troubleshooting.md)

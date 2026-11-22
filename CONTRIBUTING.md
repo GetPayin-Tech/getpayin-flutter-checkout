@@ -9,7 +9,7 @@ flutter pub get
 dart format --output=none --set-exit-if-changed .
 flutter analyze
 flutter test --coverage
-npx markdownlint-cli@0.50.0 '**/*.md'
+npx markdownlint-cli@0.50.0 '**/*.md' '.claude/skills/*/*.md'
 ```
 
 A green run of those five is a green pipeline: `.github/workflows/verify.yml` runs the same

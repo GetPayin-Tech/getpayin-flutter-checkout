@@ -24,7 +24,7 @@ jobs:
       - run: flutter analyze
 
       - name: Lint the documentation
-        run: npx --yes markdownlint-cli@0.50.0 '**/*.md'
+        run: npx --yes markdownlint-cli@0.50.0 '**/*.md' '.claude/skills/*/*.md'
 
       - run: flutter test --coverage
 
