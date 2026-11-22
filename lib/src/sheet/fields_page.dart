@@ -58,6 +58,7 @@ String buildFieldsPageHtml(
 <body>
   <div id="card">
     <div id="box">
+      <div class="row" id="name-row" hidden><div class="cell"><input id="name" autocomplete="cc-name" aria-label="Name on card"></div></div>
       <div class="row"><div class="cell"><div id="number"></div></div></div>
       <div class="row">
         <div class="cell"><input id="expiry" inputmode="numeric" autocomplete="cc-exp" placeholder="MM / YY" aria-label="Expiry"></div>
@@ -114,8 +115,10 @@ String buildFieldsPageHtml(
     return digits.length < 3 ? digits : digits.slice(0, 2) + ' / ' + digits.slice(2);
   }
 
-  // True while the card is still in date. The last moment it is good for is the end of the
-  // month printed on it, so the first of the next month is the comparison.
+  /**
+   * True while the card is still in date. The last moment it is good for is the end of the
+   * month printed on it, so the first of the next month is the comparison.
+   */
   function expiryValid(parts) {
     var month = Number(parts.expirationMonth);
     var year = Number(parts.expirationYear);
@@ -123,6 +126,27 @@ String buildFieldsPageHtml(
     if (!(month >= 1 && month <= 12) || !(year >= 2000)) { return false; }
 
     return new Date(year, month, 1) > new Date();
+  }
+
+  /**
+   * The name is reported rather than judged: what counts as a name the charge can be billed
+   * to is the host's rule, and the page would only be a second place to keep it.
+   */
+  function watchName(label) {
+    var input = document.getElementById('name');
+
+    input.placeholder = label || 'Name on card';
+    document.getElementById('name-row').hidden = false;
+
+    input.addEventListener('input', function () {
+      post({
+        type: 'change',
+        field: 'name',
+        empty: input.value.trim().length === 0,
+        value: input.value,
+        couldBeValid: true
+      });
+    });
   }
 
   function watchExpiry() {
@@ -165,9 +189,11 @@ String buildFieldsPageHtml(
     if (walletMode) { relayWalletOutcome(instance); }
   }
 
-  // A wallet payer never calls pay(), so the outcome arrives as an event. With no channel to
-  // answer on, the page does what a browser would: it goes to the return link, which the
-  // host reads off the navigation.
+  /**
+   * A wallet payer never calls pay(), so the outcome arrives as an event. With no channel to
+   * answer on, the page does what a browser would: it goes to the return link, which the
+   * host reads off the navigation.
+   */
   function relayWalletOutcome(instance) {
     function go(result) {
       if (result && result.returnUrl) { window.location.href = result.returnUrl; }
@@ -215,6 +241,8 @@ String buildFieldsPageHtml(
     listen(fields, walletMode);
     watchExpiry();
 
+    if (config.collectName) { watchName(config.nameLabel); }
+
     fields.mount().then(function (ready) {
       post({ type: 'ready', amountMinor: ready.amountMinor, currency: ready.currency });
     }).catch(fail);
@@ -222,10 +250,12 @@ String buildFieldsPageHtml(
 
   window.__paylinkHost = {
     start: function (config) { start(config || {}, false); },
-    pay: function () {
+    pay: function (billing) {
       if (!fields) { return; }
 
       var parts = expiry();
+
+      if (billing) { parts.billing = billing; }
 
       fields.pay(parts).then(function (result) {
         post({
@@ -244,9 +274,11 @@ String buildFieldsPageHtml(
     }
   };
 
-  // The wallet surface carries its configuration in the fragment, because a web view the
-  // host has scripted cannot show Apple Pay, so there is no channel to hand it over. The
-  // card surface has one, and waits to be told.
+  /**
+   * The wallet surface carries its configuration in the fragment, because a web view the
+   * host has scripted cannot show Apple Pay, so there is no channel to hand it over. The
+   * card surface has one, and waits to be told.
+   */
   function startFromFragment() {
     var hash = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
     var token = hash.get('t');

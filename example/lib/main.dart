@@ -90,6 +90,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   bool _googlePayInApp = false;
   bool _useSheet = false;
+  bool _collectBilling = false;
   bool _busy = false;
   String? _step;
   CheckoutResult? _result;
@@ -147,6 +148,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         session: session,
         fieldsPageUrl: _fieldsPage.text.trim(),
         fieldsPageHeaders: fieldsPageHeaders,
+        collectBillingAddress: _collectBilling,
         returnUrl: returnUrl,
         expectedInvoiceId: session.invoiceId,
         amountLabel:
@@ -299,6 +301,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 helperText:
                     'doc/paylink-fields.html, on your registered origin.',
                 border: OutlineInputBorder(),
+              ),
+            ),
+          if (_useSheet)
+            SwitchListTile(
+              value: _collectBilling,
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(() => _collectBilling = value),
+              title: const Text('Billing address'),
+              subtitle: const Text(
+                'Ask for the address the card is billed to, which is what AVS checks.',
               ),
             ),
           SwitchListTile(

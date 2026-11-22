@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../core/return_url.dart';
 import '../types.dart';
+import 'billing_details.dart';
 import 'fields_session.dart';
 
 /// What the fields page reports while the payer is on it.
@@ -33,9 +34,10 @@ class FieldsChanged extends FieldsEvent {
     required this.valid,
     required this.empty,
     required this.couldBeValid,
+    this.value,
   });
 
-  /// `number` or `securityCode`.
+  /// `number`, `securityCode`, `expiry` or `name`.
   final String field;
 
   /// Whether what the payer has typed is a usable value.
@@ -46,6 +48,14 @@ class FieldsChanged extends FieldsEvent {
 
   /// Whether it could still become valid as the payer keeps typing.
   final bool couldBeValid;
+
+  /// What the payer typed, for the inputs the gateway does not host.
+  ///
+  /// Null for the card number and the security code, and it must stay null for them: those
+  /// are rendered inside the gateway's own frames precisely so that nothing on this side of
+  /// the channel ever sees them. The name on the card is not cardholder data in that sense,
+  /// and the sheet needs it to bill the charge to someone.
+  final String? value;
 }
 
 /// 3-D Secure started. The page raises its own challenge frame over everything.
@@ -149,6 +159,7 @@ FieldsEvent? parseFieldsEvent(String raw) {
         valid: decoded['valid'] == true,
         empty: decoded['empty'] != false,
         couldBeValid: decoded['couldBeValid'] != false,
+        value: _stringAt(decoded, 'value'),
       ),
     'authenticating' => const FieldsAuthenticating(),
     'charging' => const FieldsCharging(),
@@ -218,11 +229,15 @@ String startFieldsCommand({
   required String clientToken,
   required Map<String, Object?> style,
   List<String> wallets = const <String>[],
+  bool collectName = false,
+  String nameLabel = 'Name on card',
 }) {
   final config = jsonEncode(<String, Object?>{
     'clientToken': clientToken,
     'wallets': wallets,
     'style': style,
+    'collectName': collectName,
+    'nameLabel': nameLabel,
   });
 
   return 'window.__paylinkHost && window.__paylinkHost.start($config);';
@@ -235,12 +250,22 @@ String startFieldsCommand({
 String destroyCommand() =>
     'window.__paylinkHost && window.__paylinkHost.destroy();';
 
-/// The JavaScript that charges the card the payer entered.
+/// The JavaScript that charges the card the payer entered, billed to [billing].
 ///
 /// It carries no expiry: the expiry input sits inside the card box with the two hosted
 /// fields, because a box whose three inputs are drawn by two different engines cannot be
 /// kept aligned, and an expiry date is not cardholder data for the page to be trusted with.
-String payCommand() => 'window.__paylinkHost && window.__paylinkHost.pay();';
+///
+/// It does carry the address, for the opposite reason: the billing form is drawn by the
+/// sheet, the gateway's token holds no address of its own, and the page has nothing to add
+/// to one. Null for an address the charge would ignore, so the page is told the same thing
+/// in both cases rather than having to decide.
+String payCommand({BillingDetails? billing}) {
+  final wire = billing?.toWire() ?? const <String, Object?>{};
+  final argument = wire.isEmpty ? 'null' : jsonEncode(wire);
+
+  return 'window.__paylinkHost && window.__paylinkHost.pay($argument);';
+}
 
 String? _stringAt(Map<String, Object?> source, String key) {
   final value = source[key];

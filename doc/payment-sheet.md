@@ -117,6 +117,37 @@ only `PAID` is paid, and a charge booked against another invoice is refused. It 
 report of what PayLink said, never proof of payment — confirm the `invoice.paid` webhook on your
 server before you deliver anything.
 
+## The billing address
+
+The gateway renders the card number and the security code and nothing else, so the token it
+mints carries **no billing address**. Without one the charge goes out against the
+placeholder address configured on your company, and that is what the issuer's address check
+is matched against — for a payer who is sitting right there able to answer.
+
+Turn it on and the sheet asks:
+
+```dart
+PaymentSheetConfiguration(
+  collectBillingAddress: true,
+  billingCountry: 'US',
+  // ...
+)
+```
+
+That adds a **Name on card** row to the card box and a billing section under it: country,
+street, city, a region for the countries that have one, and a postal code. The pay button
+waits for a name and a street, because the gateway ignores an address carrying less than
+that and the payer would never learn why their bank refused.
+
+Three things are worth knowing before you switch it on:
+
+- **Your company has to have the billing fields enabled.** Without the flag PayLink ignores
+  what the sheet sends and keeps using the placeholders.
+- **A region is only read for the United States and Canada.** The sheet asks for one only
+  there, and calls it a state or a province to suit.
+- **Email and phone are not part of it.** They keep their existing source, which is the
+  payment your server created.
+
 ## Wallets
 
 Name both; the sheet shows the one that belongs on the phone — Apple Pay on iOS, Google Pay

@@ -480,6 +480,85 @@ void main() {
   });
 
   /*
+   * The address the card is billed to is typed on the Flutter side, except the name, which
+   * is a row of the card box. Neither reaches the gateway unless the box is told to ask for
+   * one and the charge is told to carry the other.
+   */
+  group('the billing address', () {
+    testWidgets('has the page put a name row in the box when it is collected',
+        (tester) async {
+      final controller = CardFieldsController(
+        session: testFieldsSession(),
+        pageUrl: testFieldsPageUrl,
+        collectsBilling: true,
+        nameLabel: 'Nom sur la carte',
+      );
+
+      webView.controllers.first.finishLoading();
+      await tester.pump();
+
+      expect(
+        webView.controllers.first.scripts.last,
+        contains('"collectName":true'),
+      );
+      expect(
+        webView.controllers.first.scripts.last,
+        contains('"nameLabel":"Nom sur la carte"'),
+      );
+      controller.dispose();
+    });
+
+    testWidgets('leaves the box alone when it is not', (tester) async {
+      final controller = CardFieldsController(
+        session: testFieldsSession(),
+        pageUrl: testFieldsPageUrl,
+      );
+
+      webView.controllers.first.finishLoading();
+      await tester.pump();
+
+      expect(
+        webView.controllers.first.scripts.last,
+        contains('"collectName":false'),
+      );
+      controller.dispose();
+    });
+
+    testWidgets('travels with the charge', (tester) async {
+      final controller = CardFieldsController(
+        session: testFieldsSession(),
+        pageUrl: testFieldsPageUrl,
+        collectsBilling: true,
+      );
+
+      webView.controllers.first.finishLoading();
+      await tester.pump();
+
+      for (final field in <String>['number', 'securityCode', 'expiry']) {
+        webView.controllers.first.post(
+          '{"type":"change","field":"$field","valid":true,"empty":false}',
+        );
+      }
+      webView.controllers.first.post(
+        '{"type":"ready","amountMinor":9742,"currency":"USD"}',
+      );
+
+      await controller.pay(
+        billing: const BillingDetails(
+          name: 'Ada Lovelace',
+          address: '12 Noyes Street',
+        ),
+      );
+
+      expect(
+        webView.controllers.first.scripts.last,
+        contains('"firstName":"Ada","lastName":"Lovelace"'),
+      );
+      controller.dispose();
+    });
+  });
+
+  /*
    * A page served through a development tunnel, or from a staging origin behind a gate,
    * can need a header before it will hand the page over at all. Without one the web view
    * loads the gate's own page where the card fields should be.

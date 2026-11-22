@@ -184,9 +184,55 @@ void main() {
      * The expiry is read by the page from its own input, which sits in the box with the two
      * hosted fields so the three cannot drift out of alignment.
      */
+    test('reads the name the page holds, which the sheet bills the card to',
+        () {
+      final event = parseFieldsEvent(
+        '{"type":"change","field":"name","empty":false,"value":"Ada Lovelace"}',
+      );
+
+      expect(event, isA<FieldsChanged>());
+      expect((event! as FieldsChanged).field, 'name');
+      expect((event as FieldsChanged).value, 'Ada Lovelace');
+    });
+
+    test('reads no value from a field the gateway hosts', () {
+      final event = parseFieldsEvent(
+        '{"type":"change","field":"number","valid":true,"empty":false}',
+      );
+
+      expect((event! as FieldsChanged).value, isNull);
+    });
+
     test('asks for a charge without carrying the expiry', () {
+      expect(payCommand(),
+          'window.__paylinkHost && window.__paylinkHost.pay(null);');
+    });
+
+    /*
+     * The address does carry, because the page has none to give: the gateway's token holds
+     * no billing, and the form the payer filled in is on the Flutter side of the sheet.
+     */
+    test('carries the billing address the payer gave', () {
+      const billing = BillingDetails(
+        name: 'Ada Lovelace',
+        country: 'EG',
+        city: 'Cairo',
+        address: '12 Noyes Street',
+      );
+
       expect(
-          payCommand(), 'window.__paylinkHost && window.__paylinkHost.pay();');
+        payCommand(billing: billing),
+        'window.__paylinkHost && window.__paylinkHost.pay('
+        '{"firstName":"Ada","lastName":"Lovelace","country":"EG",'
+        '"city":"Cairo","address":"12 Noyes Street"});',
+      );
+    });
+
+    test('carries nothing for an address the charge would ignore', () {
+      expect(
+        payCommand(billing: const BillingDetails(city: 'Cairo')),
+        'window.__paylinkHost && window.__paylinkHost.pay(null);',
+      );
     });
   });
 }

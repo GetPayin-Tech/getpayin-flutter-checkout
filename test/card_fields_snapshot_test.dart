@@ -177,4 +177,45 @@ void main() {
       );
     });
   });
+
+  /*
+   * The name is typed into the card box, because a box whose rows are drawn by two engines
+   * cannot be kept aligned, but what counts as a name is decided here: the charge wants two
+   * of them and ignores the whole address without both.
+   */
+  group('the name on the card', () {
+    test('is remembered, so the sheet can bill the card to it', () {
+      final snapshot = applyFieldsEvent(
+        const CardFieldsSnapshot(ready: true),
+        const FieldsChanged(
+          field: 'name',
+          valid: false,
+          empty: false,
+          couldBeValid: true,
+          value: ' Ada Lovelace ',
+        ),
+      );
+
+      expect(snapshot.cardholderName, 'Ada Lovelace');
+    });
+
+    test('counts as filled in only once it is two names', () {
+      CardFieldsSnapshot typed(String name) => applyFieldsEvent(
+            const CardFieldsSnapshot(
+              ready: true,
+              valid: <String>{'number', 'securityCode', 'expiry'},
+            ),
+            FieldsChanged(
+              field: 'name',
+              valid: false,
+              empty: name.isEmpty,
+              couldBeValid: true,
+              value: name,
+            ),
+          );
+
+      expect(typed('Ada').valid, isNot(contains('name')));
+      expect(typed('Ada Lovelace').valid, contains('name'));
+    });
+  });
 }

@@ -12,6 +12,8 @@ import '../core/return_url.dart';
 import '../platform.dart';
 import '../types.dart';
 import 'amount.dart';
+import 'billing_countries.dart';
+import 'billing_form.dart';
 import 'card_fields_controller.dart';
 import 'fields_protocol.dart';
 import 'fields_session.dart';
@@ -29,6 +31,9 @@ class PaymentSheetConfiguration {
     required this.fieldsPageUrl,
     required this.returnUrl,
     this.fieldsPageHeaders = const <String, String>{},
+    this.collectBillingAddress = false,
+    this.billingCountries = defaultBillingCountries,
+    this.billingCountry = 'EG',
     this.expectedInvoiceId,
     this.amountLabel,
     this.wallets = const <PaymentWallet>[],
@@ -55,6 +60,21 @@ class PaymentSheetConfiguration {
   /// A development tunnel or a gated staging origin can answer a plain request with its own
   /// interstitial, which is what the payer would then see where the sheet should be.
   final Map<String, String> fieldsPageHeaders;
+
+  /// Whether the payer is asked for the address their card is billed to.
+  ///
+  /// Off by default, and worth turning on only where the company collects one: the gateway
+  /// renders the card number and the security code and nothing else, so without an address
+  /// the charge goes out against the company's placeholder and the issuer's address check
+  /// is matched against that. Turning it on adds a name row to the card box as well, since
+  /// the gateway ignores an address that does not carry one.
+  final bool collectBillingAddress;
+
+  /// The countries the billing form offers. Narrow it, or translate it, as you like.
+  final List<BillingCountry> billingCountries;
+
+  /// The country the billing form starts on, as an ISO 3166-1 alpha-2 code.
+  final String billingCountry;
 
   /// The invoice this payment is for, so a result naming another one is refused.
   final Object? expectedInvoiceId;
@@ -179,10 +199,15 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     session: _config.session,
     pageUrl: _config.fieldsPageUrl,
     pageHeaders: _config.fieldsPageHeaders,
+    collectsBilling: _config.collectBillingAddress,
+    nameLabel: _config.strings.nameOnCard,
     style: _config.style,
     onPayment: _onPayment,
     onFailure: _onFieldsFailure,
   );
+
+  late final BillingFieldSet _billing =
+      BillingFieldSet(country: _config.billingCountry);
 
   _Screen _screen = _Screen.methods;
   SavedCard? _selected;
@@ -201,6 +226,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   void dispose() {
     _card.removeListener(_onCardChanged);
     _card.dispose();
+    _billing.dispose();
     super.dispose();
   }
 
@@ -306,6 +332,21 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     return _config.amountLabel ?? '';
   }
 
+  /// How tall the sheet may grow before its content starts scrolling instead.
+  ///
+  /// A card screen that collects a billing address is taller than a short phone with the
+  /// keyboard up, and a sheet that cannot scroll simply hides the pay button under the
+  /// bottom edge. The space the keyboard takes is already out of this, because the whole
+  /// sheet is inset by it.
+  double _tallestIn(BuildContext context) {
+    final media = MediaQuery.of(context);
+
+    return math.max(
+      240,
+      media.size.height - media.viewInsets.bottom - media.padding.top - 24,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final style = _config.style;
@@ -323,12 +364,15 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
           child: AnimatedSize(
             duration: const Duration(milliseconds: 160),
             alignment: Alignment.topCenter,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: _screenContent(context),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: _tallestIn(context)),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: _screenContent(context),
+                ),
               ),
             ),
           ),
@@ -485,7 +529,20 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       const SizedBox(height: 16),
       SectionLabel(_config.strings.cardInformation, style: _config.style),
       SizedBox(
-          height: 98, child: CardBox(controller: _card, style: _config.style)),
+        height: _config.collectBillingAddress ? 146 : 98,
+        child: CardBox(controller: _card, style: _config.style),
+      ),
+      if (_config.collectBillingAddress) ...<Widget>[
+        const SizedBox(height: 16),
+        SectionLabel(_config.strings.billingAddress, style: _config.style),
+        BillingForm(
+          fields: _billing,
+          style: _config.style,
+          strings: _config.strings,
+          countries: _config.billingCountries,
+          onChanged: () => setState(() {}),
+        ),
+      ],
       if (_card.errorMessage != null || _error != null)
         ErrorText(_card.errorMessage ?? _error!, style: _config.style),
       const SizedBox(height: 16),
@@ -493,8 +550,31 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         label: '${_config.strings.pay} $_amountLabel'.trim(),
         style: _config.style,
         busy: _card.isCharging,
-        onPressed: _card.isComplete ? _card.pay : null,
+        onPressed: _canPayByCard ? _payByCard : null,
       ),
     ];
+  }
+
+  /// Whether there is enough on the card screen to charge.
+  ///
+  /// The box answers for the card. The address is asked separately because the gateway
+  /// ignores an incomplete one outright, and a payer who filled in half a billing form and
+  /// was charged without it would never learn why their bank's address check failed.
+  bool get _canPayByCard {
+    if (!_card.isComplete) {
+      return false;
+    }
+
+    return !_config.collectBillingAddress ||
+        _billing.detailsFor(_card.snapshot.cardholderName).isComplete;
+  }
+
+  /// Charges the card in the box, billed to the address beside it.
+  Future<void> _payByCard() {
+    return _card.pay(
+      billing: _config.collectBillingAddress
+          ? _billing.detailsFor(_card.snapshot.cardholderName)
+          : null,
+    );
   }
 }

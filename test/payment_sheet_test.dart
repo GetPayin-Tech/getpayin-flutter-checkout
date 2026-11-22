@@ -47,9 +47,11 @@ void main() {
     List<SavedCard> savedCards = const <SavedCard>[],
     Future<CheckoutResult> Function(SavedCard card)? chargeSavedCard,
     bool fallBackToHostedCheckout = true,
+    bool collectBillingAddress = false,
     String origin = testOrigin,
   }) {
     return PaymentSheetConfiguration(
+      collectBillingAddress: collectBillingAddress,
       session: testFieldsSession(origin: origin),
       fieldsPageUrl: testFieldsPageUrl,
       returnUrl: testReturnUrl,
@@ -207,7 +209,7 @@ void main() {
     await tester.tap(find.text(r'Pay $97.42'));
     await pumpFrames(tester);
 
-    expect(cardBox().scripts.last, contains('__paylinkHost.pay()'));
+    expect(cardBox().scripts.last, contains('__paylinkHost.pay(null)'));
 
     postToCard(<String, Object?>{
       'type': 'payment',
@@ -409,5 +411,134 @@ void main() {
 
     // Tapping it did nothing: the list is still up.
     expect(find.text(const PaymentSheetStrings().selectCard), findsOneWidget);
+  });
+
+  /*
+   * The address the card is billed to. The gateway's token carries none, so without one the
+   * charge is matched against the company's placeholder address — and the gateway drops a
+   * block that does not name the cardholder, which is why the box grows a name row with it.
+   */
+  group('the billing address', () {
+    Future<void> fillIn(WidgetTester tester, String label, String value) async {
+      await tester.enterText(find.widgetWithText(TextField, label), value);
+      await pumpFrames(tester);
+    }
+
+    /// Scrolls the pay button into view and taps it, the way a payer has to.
+    ///
+    /// A card screen collecting an address is taller than the sheet, so the button really
+    /// is below the fold until the payer scrolls to it.
+    Future<void> tapPay(WidgetTester tester) async {
+      await tester.ensureVisible(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+    }
+
+    /// Opens the card screen of a sheet that collects an address, fields mounted.
+    ///
+    /// The page has to report that it loaded before the box is told what to render, and
+    /// the name row is part of what it is told.
+    Future<void> openCardScreen(WidgetTester tester) async {
+      await openSheet(tester, configuration(collectBillingAddress: true));
+      cardBox().finishLoading();
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+    }
+
+    testWidgets('is asked for under the card', (tester) async {
+      await openCardScreen(tester);
+
+      expect(
+        find.text(const PaymentSheetStrings().billingAddress),
+        findsOneWidget,
+      );
+      expect(
+          find.text(const PaymentSheetStrings().addressLine), findsOneWidget);
+      expect(find.text(const PaymentSheetStrings().city), findsOneWidget);
+      expect(find.text(const PaymentSheetStrings().postalCode), findsOneWidget);
+    });
+
+    testWidgets('is not asked for by a sheet that does not collect it',
+        (tester) async {
+      await openSheet(tester, configuration());
+      cardBox().finishLoading();
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+
+      expect(
+        find.text(const PaymentSheetStrings().billingAddress),
+        findsNothing,
+      );
+      expect(cardBox().scripts.first, contains('"collectName":false'));
+    });
+
+    testWidgets('has the box ask for the name the gateway cannot do without',
+        (tester) async {
+      await openCardScreen(tester);
+
+      expect(cardBox().scripts.first, contains('"collectName":true'));
+      expect(
+        cardBox().scripts.first,
+        contains('"nameLabel":"${const PaymentSheetStrings().nameOnCard}"'),
+      );
+    });
+
+    testWidgets('holds the charge until there is an address to bill it to',
+        (tester) async {
+      await openCardScreen(tester);
+
+      await tapPay(tester);
+
+      expect(
+        cardBox().scripts.where((script) => script.contains('.pay(')),
+        isEmpty,
+        reason: 'a card with no billing address is not chargeable yet',
+      );
+
+      postToCard(<String, Object?>{
+        'type': 'change',
+        'field': 'name',
+        'empty': false,
+        'value': 'Ada Lovelace',
+      });
+      await pumpFrames(tester);
+      await fillIn(
+          tester, const PaymentSheetStrings().addressLine, '12 Noyes Street');
+
+      await tapPay(tester);
+
+      expect(cardBox().scripts.last, contains('.pay('));
+    });
+
+    testWidgets('travels with the charge, under the gateway own names',
+        (tester) async {
+      await openCardScreen(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'change',
+        'field': 'name',
+        'empty': false,
+        'value': 'Ada Lovelace',
+      });
+      await pumpFrames(tester);
+
+      await fillIn(
+          tester, const PaymentSheetStrings().addressLine, '12 Noyes Street');
+      await fillIn(tester, const PaymentSheetStrings().city, 'Cairo');
+      await fillIn(tester, const PaymentSheetStrings().postalCode, '11511');
+
+      await tapPay(tester);
+
+      final charge = cardBox().scripts.last;
+
+      expect(charge, contains('"firstName":"Ada"'));
+      expect(charge, contains('"lastName":"Lovelace"'));
+      expect(charge, contains('"country":"EG"'));
+      expect(charge, contains('"address":"12 Noyes Street"'));
+      expect(charge, contains('"city":"Cairo"'));
+      expect(charge, contains('"postalCode":"11511"'));
+    });
   });
 }

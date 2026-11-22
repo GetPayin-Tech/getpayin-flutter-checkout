@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'billing_details.dart';
 import 'card_fields_snapshot.dart';
 import 'fields_page.dart';
 import 'fields_protocol.dart';
@@ -24,6 +25,8 @@ class CardFieldsController extends ChangeNotifier {
     required this.session,
     required this.pageUrl,
     this.pageHeaders = const <String, String>{},
+    this.collectsBilling = false,
+    this.nameLabel = 'Name on card',
     this.style = const PaymentSheetStyle(),
     this.onPayment,
     this.onFailure,
@@ -42,6 +45,16 @@ class CardFieldsController extends ChangeNotifier {
   /// A development tunnel or a gated staging origin can answer a plain request with its own
   /// interstitial, which is what the payer would then see where the card box should be.
   final Map<String, String> pageHeaders;
+
+  /// Whether the box carries a name row, for a sheet that bills the card to an address.
+  ///
+  /// The name belongs in the box rather than beside it: it is one of the card's own rows in
+  /// every card form a payer has met, and a box whose rows are drawn by two engines cannot
+  /// be kept aligned. The address it belongs to is drawn by the sheet.
+  final bool collectsBilling;
+
+  /// What that row says before the payer types, in the sheet's own language.
+  final String nameLabel;
 
   /// How the box is drawn, shared with the Flutter side of the sheet.
   final PaymentSheetStyle style;
@@ -92,14 +105,14 @@ class CardFieldsController extends ChangeNotifier {
   /// Does nothing while a charge is already running: PayLink refuses the second one with
   /// `in_progress` anyway, and a payer who taps twice should not be told their payment
   /// failed.
-  Future<void> pay() async {
+  Future<void> pay({BillingDetails? billing}) async {
     if (!isComplete || isCharging || isAuthenticating) {
       return;
     }
 
     _apply(_snapshot.copyWith(charging: true).withMessage(null));
 
-    await _webView.runJavaScript(payCommand());
+    await _webView.runJavaScript(payCommand(billing: billing));
   }
 
   /// Takes the page down with the box.
@@ -164,6 +177,8 @@ class CardFieldsController extends ChangeNotifier {
       startFieldsCommand(
         clientToken: session.clientToken,
         style: style.toCssVariables(),
+        collectName: collectsBilling,
+        nameLabel: nameLabel,
       ),
     );
   }

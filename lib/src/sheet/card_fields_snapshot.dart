@@ -1,3 +1,4 @@
+import 'billing_details.dart';
 import 'fields_protocol.dart';
 
 /// Every field the gateway has to be holding before a card can be charged.
@@ -18,6 +19,7 @@ class CardFieldsSnapshot {
     this.amountMinor,
     this.currency,
     this.errorMessage,
+    this.cardholderName,
     this.valid = const <String>{},
   });
 
@@ -39,6 +41,13 @@ class CardFieldsSnapshot {
   /// The last thing worth showing the payer about the card they entered.
   final String? errorMessage;
 
+  /// The name the payer typed on the card, which the charge is billed to.
+  ///
+  /// Typed into the card box rather than beside it, because the box's rows have to line up
+  /// and the gateway draws two of them. It is not cardholder data in the sense the number
+  /// and the security code are, so the page may hand it over and the sheet may hold it.
+  final String? cardholderName;
+
   /// The fields holding something chargeable, by the name the page calls them.
   final Set<String> valid;
 
@@ -55,6 +64,7 @@ class CardFieldsSnapshot {
     bool? charging,
     int? amountMinor,
     String? currency,
+    String? cardholderName,
     Set<String>? valid,
   }) {
     return CardFieldsSnapshot(
@@ -64,6 +74,7 @@ class CardFieldsSnapshot {
       amountMinor: amountMinor ?? this.amountMinor,
       currency: currency ?? this.currency,
       errorMessage: errorMessage,
+      cardholderName: cardholderName ?? this.cardholderName,
       valid: valid ?? this.valid,
     );
   }
@@ -77,6 +88,7 @@ class CardFieldsSnapshot {
       amountMinor: amountMinor,
       currency: currency,
       errorMessage: message,
+      cardholderName: cardholderName,
       valid: valid,
     );
   }
@@ -97,11 +109,13 @@ CardFieldsSnapshot applyFieldsEvent(
         amountMinor: amountMinor,
         currency: currency,
       ),
-    FieldsChanged(:final field, :final valid, :final empty) => _fieldChanged(
+    FieldsChanged(:final field, :final valid, :final empty, :final value) =>
+      _fieldChanged(
         snapshot,
         field: field,
         valid: valid,
         empty: empty,
+        value: value,
       ),
     FieldsAuthenticating() => snapshot.copyWith(authenticating: true),
     FieldsCharging() => snapshot.copyWith(charging: true),
@@ -125,12 +139,26 @@ CardFieldsSnapshot _fieldChanged(
   required String field,
   required bool valid,
   required bool empty,
+  String? value,
 }) {
+  final name = field == _nameField ? value?.trim() : null;
   final fields = <String>{...snapshot.valid};
 
-  valid ? fields.add(field) : fields.remove(field);
+  (field == _nameField ? _isAName(name) : valid)
+      ? fields.add(field)
+      : fields.remove(field);
 
-  final changed = snapshot.copyWith(valid: fields);
+  final changed = snapshot.copyWith(valid: fields, cardholderName: name);
 
   return empty ? changed : changed.withMessage(null);
 }
+
+/// The one field in the box the page does not have the gateway render.
+const String _nameField = 'name';
+
+/// Whether [name] is a name the charge can be billed to.
+///
+/// The gateway wants a first name and a surname and ignores a billing address carrying
+/// anything less, so a single word is not yet an answer. Asked through [BillingDetails] so
+/// the box and the address agree on what a name is.
+bool _isAName(String? name) => BillingDetails(name: name).toWire().isNotEmpty;

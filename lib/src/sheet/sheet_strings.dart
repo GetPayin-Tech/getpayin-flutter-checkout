@@ -10,6 +10,15 @@ class PaymentSheetStrings {
     this.selectCard = 'Select card',
     this.addNewCard = 'Add new card',
     this.cardInformation = 'Card information',
+    this.nameOnCard = 'Name on card',
+    this.billingAddress = 'Billing address',
+    this.country = 'Country or region',
+    this.addressLine = 'Address',
+    this.city = 'City',
+    this.state = 'State',
+    this.province = 'Province',
+    this.postalCode = 'Postal code',
+    this.zip = 'ZIP',
     this.close = 'Close',
     this.back = 'Back',
     this.pay = 'Pay',
@@ -42,6 +51,33 @@ class PaymentSheetStrings {
 
   /// The label over the card box.
   final String cardInformation;
+
+  /// The placeholder in the card box's own name row.
+  final String nameOnCard;
+
+  /// The label over the billing address.
+  final String billingAddress;
+
+  /// The label on the country list.
+  final String country;
+
+  /// The placeholder for the street address.
+  final String addressLine;
+
+  /// The placeholder for the city or town.
+  final String city;
+
+  /// What a region is called in the United States.
+  final String state;
+
+  /// What a region is called in Canada.
+  final String province;
+
+  /// What a postal code is called outside the United States.
+  final String postalCode;
+
+  /// What a postal code is called in the United States.
+  final String zip;
 
   /// What a screen reader announces for the close button.
   final String close;
