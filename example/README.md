@@ -3,15 +3,30 @@
 A harness for the checks that only a phone can make, and the thing the `apk` workflow
 builds.
 
-There is no server here on purpose. Paste a `checkout_url` that your own server or the
-GetPayIn dashboard has already created, and the app opens it exactly as an integration
-would: same provider, same options, same reading of the result. The invoice id is read off
-the URL, so the result is still bound to the checkout it came from.
+Give it an amount and a currency and it creates a payment, then opens it exactly as an
+integration would: same provider, same options, same reading of the result. The invoice id
+is read off the `checkout_url`, so the result stays bound to the checkout it came from.
+
+The app does not create the payment itself, and no app should: `POST /v2/integration/init`
+is signed with the integration's **hash token**, and anything that signs belongs on a
+server. `tool/dev_server.py` is the smallest server that does it, so the phone only ever
+receives a link.
 
 ```bash
-cd example
-flutter run
+# on your machine, once
+cat > ~/.config/getpayin/dev.env <<'ENV'
+GETPAYIN_BASE_URL=https://pay.getpayin.com
+GETPAYIN_PUBLIC_TOKEN=your-authentication-token
+GETPAYIN_HASH_TOKEN=your-hash-token
+ENV
+chmod 600 ~/.config/getpayin/dev.env
+
+python3 example/tool/dev_server.py      # prints the address to put in the app
+cd example && flutter run
 ```
+
+Keep that file out of the repository. If a hash token ever reaches a bundle, a page or a
+log, rotate it.
 
 Android is scaffolded already, and its manifest carries the two things the package needs:
 the `myapp` return scheme and the three `<queries>` entries that let Android's WebView find
