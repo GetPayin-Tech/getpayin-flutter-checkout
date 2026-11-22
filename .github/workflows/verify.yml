@@ -34,10 +34,11 @@ jobs:
           python3 - <<'PY'
           import sys
 
-          # Everything but the two plugin constructors, which only a phone can reach.
+          # Everything but the lines only a phone can reach: the plugin constructors, and
+          # the two Android calls that need a real AndroidWebViewController under them.
           allowed = {
               'lib/src/sessions/deep_link.dart': 6,
-              'lib/src/widgets/getpayin_checkout_view.dart': 2,
+              'lib/src/webview/wallet_settings.dart': 2,
           }
           missed = {}
           current = None
