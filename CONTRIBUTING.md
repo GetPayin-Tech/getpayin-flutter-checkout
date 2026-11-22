@@ -35,9 +35,10 @@ secret:
 
 1. No signing and no hash token in the app. The client's server signs
    `POST /api/integration/init` and hands the app only a `checkout_url`.
-2. No JavaScript channel on the checkout web view, no `runJavaScript`, no script of any
-   kind. WebKit turns Apple Pay off on any page the host app has added scripts to, with no
-   error.
+2. No JavaScript channel and no `runJavaScript` on any surface that can show a wallet —
+   the hosted checkout and the wallet surface. WebKit turns Apple Pay off on any page the
+   host app has added scripts to, with no error. The payment sheet's card box is scripted
+   on purpose and shows no wallet; a test asserts the wallet surface stays unscripted.
 3. No user-agent override. Google checks it and requires it to end with
    `GOOGLE_PAY_SUPPORTED`.
 4. The app never treats the return link as proof of payment. A link the reader cannot

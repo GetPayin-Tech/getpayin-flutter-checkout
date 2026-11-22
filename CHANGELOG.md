@@ -4,6 +4,28 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the package follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `GetPayInPaymentSheet`: the same payment taken on a sheet in your own app — wallet button,
+  saved cards, card form, one pay button — running on PayLink's hosted card fields. The card
+  number and security code are still rendered by the gateway, on a page you host at your
+  registered origin; everything around them is Flutter. See
+  [The payment sheet](doc/payment-sheet.md).
+- `PayLinkFieldsSession`, `FieldsFailure`, `CardFieldsController`, `WalletSurface`,
+  `buildFieldsPageHtml` and the `FieldsEvent` family, so a different sheet can be built from
+  the same pieces.
+- `CheckoutResultCode.checkoutUnavailable`, for a sheet that could not be shown at all with
+  the fallback to the hosted checkout turned off. Nothing was charged and nothing was
+  declined.
+
+### Changed
+
+- The "no scripts" rule is now written against surfaces that can show a wallet rather than
+  against the checkout view, which is what it always meant: the wallet surface and the hosted
+  checkout are never scripted, and the sheet's card box is, deliberately.
+
 ## 0.1.0
 
 First release: the Flutter port of

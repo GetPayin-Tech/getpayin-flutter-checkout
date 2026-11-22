@@ -1,0 +1,279 @@
+import 'dart:convert';
+
+/// The channel the fields page posts its events on.
+const String fieldsChannelName = 'PayLinkFields';
+
+/// Builds the page that hosts PayLink's card fields.
+///
+/// **You host this file yourself**, on the origin registered on your integration, over
+/// HTTPS. That is not a formality: the origin is baked into the capture context CyberSource
+/// issues and checked on every call, so fields served from anywhere else render nothing at
+/// all. The sheet loads this page into a web view and drives it over [fieldsChannelName].
+///
+/// The page is deliberately inert until it is told to start. In the sheet it waits for the
+/// host to hand it a client token over the channel, so the token never reaches the page's
+/// URL — and so never reaches your access log, the web view's history, or a `Referer`
+/// header. The wallet surface has no channel (a web view the host has scripted cannot show
+/// Apple Pay), so there the token arrives in the fragment, which browsers do not send.
+///
+/// Everything it does, it does through PayLink: the SDK comes from [sdkUrl], the capture
+/// context, payer authentication and the charge are PayLink's endpoints, and the card
+/// iframes are the gateway's own. Nothing here talks to a gateway directly.
+String buildFieldsPageHtml(
+    {required String sdkUrl, String channel = fieldsChannelName}) {
+  final script = jsonEncode(sdkUrl);
+  final channelName = jsonEncode(channel);
+
+  return '''
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Card</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body {
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #30313d;
+    -webkit-text-size-adjust: 100%;
+  }
+  #box { border: 1px solid var(--border, #e6e6e6); border-radius: 8px; overflow: hidden; background: #fff; }
+  #box.invalid { border-color: var(--danger, #df1b41); }
+  .row { display: flex; }
+  .cell { position: relative; flex: 1; height: 48px; padding: 0 12px; display: flex; align-items: center; }
+  .cell + .cell { border-left: 1px solid var(--border, #e6e6e6); }
+  .row + .row { border-top: 1px solid var(--border, #e6e6e6); }
+  .cell > div, .cell > input { width: 100%; height: 100%; }
+  input {
+    border: 0; outline: 0; background: transparent; font: inherit; color: inherit;
+    padding: 0; min-width: 0;
+  }
+  input::placeholder { color: var(--placeholder, #a3acb9); }
+  #wallet { min-height: 48px; }
+</style>
+</head>
+<body>
+  <div id="card">
+    <div id="box">
+      <div class="row"><div class="cell"><div id="number"></div></div></div>
+      <div class="row">
+        <div class="cell"><input id="expiry" inputmode="numeric" autocomplete="cc-exp" placeholder="MM / YY" aria-label="Expiry"></div>
+        <div class="cell"><div id="cvc"></div></div>
+      </div>
+    </div>
+  </div>
+  <div id="wallet" hidden></div>
+
+<script src=$script></script>
+<script>
+(function () {
+  var CHANNEL = $channelName;
+  var fields = null;
+  var started = false;
+
+  function post(message) {
+    var channel = window[CHANNEL];
+
+    if (channel && typeof channel.postMessage === 'function') {
+      channel.postMessage(JSON.stringify(message));
+    }
+  }
+
+  function fail(error) {
+    post({
+      type: 'error',
+      code: (error && error.code) || 'unknown',
+      message: (error && error.message) || 'The card could not be taken.'
+    });
+  }
+
+  function applyStyle(style) {
+    if (!style) { return; }
+
+    Object.keys(style).forEach(function (name) {
+      document.documentElement.style.setProperty('--' + name, style[name]);
+    });
+  }
+
+  function expiry() {
+    var parts = String(document.getElementById('expiry').value || '').split('/');
+    var year = (parts[1] || '').trim();
+
+    return {
+      expirationMonth: (parts[0] || '').trim(),
+      expirationYear: year.length === 2 ? String(2000 + Number(year)) : year
+    };
+  }
+
+  function formatExpiry(raw) {
+    var digits = String(raw || '').replace(/[^0-9]/g, '').slice(0, 4);
+
+    return digits.length < 3 ? digits : digits.slice(0, 2) + ' / ' + digits.slice(2);
+  }
+
+  function expiryValid(parts) {
+    var month = Number(parts.expirationMonth);
+    var year = Number(parts.expirationYear);
+
+    if (!(month >= 1 && month <= 12) || !(year >= 2000)) { return false; }
+
+    // The last moment the card is good for is the end of its month.
+    return new Date(year, month, 1) > new Date();
+  }
+
+  function watchExpiry() {
+    var input = document.getElementById('expiry');
+
+    input.addEventListener('input', function () {
+      input.value = formatExpiry(input.value);
+
+      post({
+        type: 'change',
+        field: 'expiry',
+        valid: expiryValid(expiry()),
+        empty: input.value.length === 0,
+        couldBeValid: true
+      });
+    });
+  }
+
+  function listen(instance, walletMode) {
+    instance.on('change', function (event) {
+      var state = event.state || {};
+      post({
+        type: 'change',
+        field: event.field,
+        valid: !!state.valid,
+        empty: !!state.empty,
+        couldBeValid: state.couldBeValid !== false
+      });
+    });
+    instance.on('authenticating', function () { post({ type: 'authenticating' }); });
+    instance.on('charging', function () { post({ type: 'charging' }); });
+    instance.on('walletready', function (event) {
+      post({ type: 'walletready', paymentTypes: (event && event.paymentTypes) || [] });
+    });
+    instance.on('walleterror', function (event) {
+      post({ type: 'walleterror', message: event && event.message });
+    });
+    instance.on('error', fail);
+
+    if (!walletMode) { return; }
+
+    // A wallet payer never calls pay(), so the outcome arrives as an event. With no channel
+    // to answer on, the page does what a browser would: it goes to the return link, which
+    // the host reads off the navigation.
+    instance.on('success', function (result) {
+      if (result && result.returnUrl) { window.location.href = result.returnUrl; }
+    });
+    instance.on('declined', function (result) {
+      if (result && result.returnUrl) { window.location.href = result.returnUrl; }
+    });
+  }
+
+  function start(config, walletMode) {
+    if (started) { return; }
+
+    started = true;
+    applyStyle(config.style);
+
+    var wallets = config.wallets || [];
+    var options = {
+      clientToken: config.clientToken,
+      number: '#number',
+      securityCode: '#cvc',
+      styles: config.fieldStyles || {
+        input: { 'font-size': '16px', 'font-family': 'inherit', color: '#30313d' },
+        '::placeholder': { color: '#a3acb9' },
+        invalid: { color: '#df1b41' }
+      }
+    };
+
+    if (wallets.length > 0) {
+      options.wallets = wallets;
+      options.wallet = '#wallet';
+      document.getElementById('wallet').hidden = false;
+    }
+
+    if (walletMode) {
+      document.getElementById('card').hidden = true;
+    }
+
+    try {
+      fields = PayLink.fields(options);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+
+    listen(fields, walletMode);
+    watchExpiry();
+
+    fields.mount().then(function (ready) {
+      post({ type: 'ready', amountMinor: ready.amountMinor, currency: ready.currency });
+    }).catch(fail);
+  }
+
+  window.__paylinkHost = {
+    start: function (config) { start(config || {}, false); },
+    pay: function () {
+      if (!fields) { return; }
+
+      var parts = expiry();
+
+      fields.pay(parts).then(function (result) {
+        post({
+          type: 'payment',
+          success: !!result.success,
+          message: result.message,
+          reasonCode: result.reasonCode,
+          invoiceId: result.invoiceId,
+          paidStatus: result.paidStatus,
+          returnUrl: result.returnUrl
+        });
+      }).catch(fail);
+    },
+    destroy: function () {
+      if (fields) { fields.destroy(); fields = null; started = false; }
+    }
+  };
+
+  // The wallet surface carries its configuration in the fragment, because a web view the
+  // host has scripted cannot show Apple Pay, so there is no channel to hand it over.
+  var hash = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+  var token = hash.get('t');
+
+  if (token) {
+    start({
+      clientToken: token,
+      wallets: (hash.get('w') || '').split(',').filter(Boolean),
+      style: {}
+    }, true);
+  }
+})();
+</script>
+</body>
+</html>
+''';
+}
+
+/// The URL the wallet surface is loaded with.
+///
+/// The client token travels in the fragment: a browser never sends it to the server, so it
+/// stays out of the host's access log, and it is spent on one payment within the hour.
+String walletPageUrl({
+  required String pageUrl,
+  required String clientToken,
+  required List<String> wallets,
+}) {
+  final base = pageUrl.split('#').first;
+  final query = <String>[
+    't=${Uri.encodeQueryComponent(clientToken)}',
+    if (wallets.isNotEmpty) 'w=${Uri.encodeQueryComponent(wallets.join(','))}',
+  ].join('&');
+
+  return '$base#$query';
+}

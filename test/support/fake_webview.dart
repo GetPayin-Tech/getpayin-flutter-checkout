@@ -1,11 +1,11 @@
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
-/// A web view platform that draws nothing and lets a test drive the navigation delegate.
+/// A web view platform that draws nothing and lets a test drive the pages it creates.
 ///
-/// The checkout screen's behaviour — presenting, completing, failing closed with a way out
-/// — is the part no pure test can reach, because it only happens once a real web view
-/// reports a navigation. This stands in for that web view.
+/// What happens on a checkout screen — presenting, completing once, failing closed with a
+/// way out — only happens when a real web view reports a navigation or a page event. This
+/// stands in for that web view, one instance per page the app opens.
 class FakeWebViewPlatform extends WebViewPlatform {
   /// Installs a fresh fake as the platform and hands it back.
   static FakeWebViewPlatform install() {
@@ -19,7 +19,7 @@ class FakeWebViewPlatform extends WebViewPlatform {
   /// Every controller the widgets created, newest last.
   final List<FakeWebViewController> controllers = <FakeWebViewController>[];
 
-  /// The delegate of the checkout being shown.
+  /// The delegate of the page created most recently.
   FakeNavigationDelegate? delegate;
 
   /// Set before a web view is created to have loading fail as a broken one does.
@@ -35,12 +35,11 @@ class FakeWebViewPlatform extends WebViewPlatform {
     final onNavigationRequest = delegate?.onNavigationRequest;
 
     if (onNavigationRequest == null) {
-      throw StateError('No checkout web view is listening for navigations.');
+      throw StateError('No web view is listening for navigations.');
     }
 
     return onNavigationRequest(
-      NavigationRequest(url: url, isMainFrame: isMainFrame),
-    );
+        NavigationRequest(url: url, isMainFrame: isMainFrame));
   }
 
   /// Reports that a page started loading, which is what an HTTP error is judged against.
@@ -98,8 +97,41 @@ class FakeWebViewController extends PlatformWebViewController {
   /// The pages this controller was asked to load, in order.
   final List<Uri> loaded = <Uri>[];
 
+  /// The channels the host registered on this page, by name.
+  final Map<String, JavaScriptChannelParams> channels =
+      <String, JavaScriptChannelParams>{};
+
+  /// Every script the host asked this page to run, in order.
+  final List<String> scripts = <String>[];
+
+  /// The delegate this controller reports its page events to.
+  FakeNavigationDelegate? navigation;
+
   /// Set to have loading fail the way a web view with no page can.
   Object? loadFailure;
+
+  /// Posts a message to the host the way this page's own script does.
+  void post(String message) {
+    final channel = channels.values.firstOrNull;
+
+    if (channel == null) {
+      throw StateError('The host registered no channel on this web view.');
+    }
+
+    channel.onMessageReceived(JavaScriptMessage(message: message));
+  }
+
+  /// Reports that this controller's own page finished loading.
+  void finishLoading() {
+    final onPageFinished = navigation?.onPageFinished;
+
+    if (onPageFinished == null) {
+      throw StateError(
+          'This web view has no delegate listening for page events.');
+    }
+
+    onPageFinished(loaded.lastOrNull.toString());
+  }
 
   @override
   Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async {}
@@ -109,8 +141,21 @@ class FakeWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setPlatformNavigationDelegate(
-    PlatformNavigationDelegate handler,
-  ) async {}
+      PlatformNavigationDelegate handler) async {
+    navigation = handler as FakeNavigationDelegate;
+  }
+
+  @override
+  Future<void> addJavaScriptChannel(
+    JavaScriptChannelParams javaScriptChannelParams,
+  ) async {
+    channels[javaScriptChannelParams.name] = javaScriptChannelParams;
+  }
+
+  @override
+  Future<void> runJavaScript(String javaScript) async {
+    scripts.add(javaScript);
+  }
 
   @override
   Future<void> loadRequest(LoadRequestParams params) async {

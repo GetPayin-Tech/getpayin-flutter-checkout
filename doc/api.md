@@ -109,6 +109,53 @@ log it, and never put it on a payment screen.
 Do not register a JavaScript channel on this view, call `runJavaScript` on it, or add
 scripts to a web view of your own around it.
 
+## `GetPayInPaymentSheet.show(context, configuration)`
+
+```dart
+static Future<CheckoutResult> show(
+  BuildContext context,
+  PaymentSheetConfiguration configuration,
+)
+```
+
+Presents the checkout as a payment sheet in your app and completes once the payment ends.
+See [The payment sheet](payment-sheet.md), which covers what it needs before it can run.
+
+### `PaymentSheetConfiguration`
+
+| Option                     | Type                                              | Default    | What it does                                                                               |
+| -------------------------- | ------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| `session`                  | `PayLinkFieldsSession`                            | required   | The payment, from your server's `/init` with `mode: "fields"`.                             |
+| `fieldsPageUrl`            | `String`                                          | required   | The page you host at the integration's registered origin.                                  |
+| `returnUrl`                | `String`                                          | required   | The link a wallet charge comes back to, and the one the hosted fallback uses.              |
+| `expectedInvoiceId`        | `Object?`                                         | `null`     | The invoice this payment is for, so a charge booked against another is refused.            |
+| `amountLabel`              | `String?`                                         | `null`     | What the pay button says until the gateway has priced the payment.                         |
+| `wallets`                  | `List<PaymentWallet>`                             | `[]`       | The wallets to offer. One is shown: the one that belongs on this platform.                 |
+| `savedCards`               | `List<SavedCard>`                                 | `[]`       | The payer's vaulted cards, from your own backend.                                          |
+| `chargeSavedCard`          | `Future<CheckoutResult> Function(SavedCard)?`     | `null`     | Charges a vaulted card. Your server's call, since it is signed with your hash token.       |
+| `style`                    | `PaymentSheetStyle`                               | Stripe-ish | How the sheet is drawn, on both sides of the card box.                                     |
+| `strings`                  | `PaymentSheetStrings`                             | English    | Every word the sheet says.                                                                 |
+| `fallBackToHostedCheckout` | `bool`                                            | `true`     | Send the payer to `checkout_url` when the fields cannot take this payment.                 |
+
+## `PayLinkFieldsSession.fromInit(response)`
+
+```dart
+static PayLinkFieldsSession? fromInit(Map<String, Object?> response)
+```
+
+Reads the session out of what `/init` answered, taking either the whole envelope or its
+`data` block. Null when the response carries no `fields` block — which is what a company
+without hosted fields gets — so fall back to `checkout_url`.
+
+## `buildFieldsPageHtml(sdkUrl:)`
+
+```dart
+String buildFieldsPageHtml({required String sdkUrl, String channel = fieldsChannelName})
+```
+
+Writes the page you host at your registered origin. `dart run tool/write_fields_page.dart`
+prints it, and [`doc/paylink-fields.html`](paylink-fields.html) is a copy of it.
+
 ## `PaymentReturnRedirect`
 
 ```dart

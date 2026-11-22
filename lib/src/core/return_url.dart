@@ -214,12 +214,24 @@ CheckoutResult _bindToInvoice(
   );
 }
 
+/// Applies the two refusals every claim of payment goes through, whatever it was read from.
+///
+/// A return link is one source; the payment message a hosted-fields charge answers with is
+/// another. Both are a claim that an invoice was paid, both are refused on the same two
+/// grounds, and this is the one place that decides it — so the hosted checkout and the
+/// payment sheet cannot drift apart on what counts as paid.
+CheckoutResult settlePaidClaim(CheckoutResult claim,
+    {Object? expectedInvoiceId}) {
+  return _bindToInvoice(_bindToInvoiceStatus(claim), expectedInvoiceId);
+}
+
 /// Turns a return link into a result, bound to the checkout it was opened for.
 ///
 /// Both presentations go through this, so the in-app screen and the browser sheet cannot
 /// drift apart on what a given link means.
 CheckoutResult resolveReturn(String url, {Object? expectedInvoiceId}) {
-  return _bindToInvoice(readCheckoutResult(url), expectedInvoiceId);
+  return settlePaidClaim(readCheckoutResult(url),
+      expectedInvoiceId: expectedInvoiceId);
 }
 
 /// The result for a payer who closed the checkout without finishing.

@@ -86,12 +86,38 @@ decline does not; see [Taking payments](doc/taking-payments.md#code-on-a-notpaid
 If you use `go_router`, add one redirect or payers will land on an unmatched route after
 paying. See [Setup](doc/setup.md#go_router).
 
+## Or take it on a sheet of your own
+
+The same payment, with the checkout drawn as a payment sheet in your app — a wallet button,
+the payer's saved cards, a card form, one pay button:
+
+```dart
+final result = await GetPayInPaymentSheet.show(
+  context,
+  PaymentSheetConfiguration(
+    session: PayLinkFieldsSession.fromInit(payment)!, // your server's /init, mode: "fields"
+    fieldsPageUrl: 'https://shop.example.com/paylink-fields.html',
+    returnUrl: 'myapp://payment-return',
+    expectedInvoiceId: invoiceId,
+    amountLabel: r'$97.42',
+    wallets: const [PaymentWallet.applePay, PaymentWallet.googlePay],
+  ),
+);
+```
+
+It runs on PayLink's hosted card fields, so the card number and security code are still
+rendered by the gateway and never reach your app. It needs hosted fields enabled, a
+registered origin and one page hosted there, and it moves you from PCI SAQ A to SAQ A-EP —
+[The payment sheet](doc/payment-sheet.md) covers all of it, including the fallback to the
+hosted checkout when the fields cannot run.
+
 ## Documentation
 
 | Guide                                            | What is in it                                                                              |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | [Setup](doc/setup.md)                            | Prerequisites, install, the provider, routing, and the iOS and Android configuration.      |
 | [Taking payments](doc/taking-payments.md)        | Opening a checkout, reading the result, confirming it, retries, and using your own screen. |
+| [The payment sheet](doc/payment-sheet.md)        | The checkout as a sheet in your app, on PayLink's hosted card fields.                      |
 | [Google Pay on Android](doc/google-pay.md)       | Getting Google's approval for in-app Google Pay, and the device requirements.              |
 | [API reference](doc/api.md)                      | Every export, option, type and error.                                                      |
 | [Security model](doc/security.md)                | What the package guarantees, what it cannot, and what your server must do.                 |

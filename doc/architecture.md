@@ -83,6 +83,38 @@ Three details in there are load-bearing, not style:
    switch takes effect at the next load, so setting it afterwards gives the payer a checkout
    with no Google Pay button and nothing in the log.
 
+## The payment sheet, and the two kinds of web view
+
+The sheet (`lib/src/sheet`) takes the same payment through PayLink's hosted card fields. Its
+decision-making is pure like everything else: `fields_session.dart` reads what `/init`
+answered and decides whether a failure is fatal, `fields_protocol.dart` reads what the page
+reports and turns a charge into a result, `fields_page.dart` writes the page. Only
+`card_fields_controller.dart` and `wallet_surface.dart` touch a web view.
+
+Those two are the reason an old invariant needed sharpening. "No scripts on the checkout web
+view" was never about checkout pages; it is about **wallets**. WebKit turns Apple Pay off on
+any page the host app has added scripts to, so the rule is:
+
+| Surface                                      | Shows a wallet | Scripted by this package           |
+| -------------------------------------------- | -------------- | ---------------------------------- |
+| The hosted checkout (`GetPayInCheckoutView`) | yes            | never                              |
+| The wallet surface (`WalletSurface`)         | yes            | never — it answers by navigating   |
+| The card box (`CardFieldsController`)        | no             | yes: a channel and `runJavaScript` |
+
+The card box is scripted deliberately. It shows card fields and nothing else, so there is no
+wallet to lose, and the alternative — passing the client token through the page's URL — would
+put a token that names a payment into the host's access log and the web view's history.
+
+A test asserts the wallet surface has no channel and runs no script. Keep it that way.
+
+## One claim of payment, two ways to make it
+
+A return link and a hosted-fields charge are both a claim that an invoice was paid, read from
+different artefacts. What a claim has to survive is decided once, in
+`core/return_url.dart` → `settlePaidClaim`: only `PAID` is paid, and a paid claim for another
+invoice is refused. `resolveReturn` feeds it a link; `resultFromPayment` feeds it a charge.
+If you add a third source, feed it the same function.
+
 ## Two deep-link sources, treated differently
 
 `sessions/deep_link.dart` reads the return link from two places, and the asymmetry is the

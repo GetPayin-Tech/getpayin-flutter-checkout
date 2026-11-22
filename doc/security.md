@@ -114,6 +114,31 @@ page driving these navigations is not one this package controls.
 scripts to. So the checkout web view registers no JavaScript channel and is never asked to
 run JavaScript — not for diagnostics, and not on Android either.
 
+## The payment sheet
+
+The sheet adds one credential and one surface, and neither changes the rule above.
+
+**The client token is designed to live on a device.** PayLink mints it on `/init`, it is
+encrypted, it lasts 60 minutes and it names exactly one payment. It cannot create a payment,
+refund, void or read anything back — everything your hash token can do, it cannot. The hash
+token stays on your server and signs `/init` and nothing else.
+
+The token is handed to the card page over the channel once the page has loaded, never in the
+page's URL: a URL reaches the host's access log, the web view's history and any `Referer` the
+page sends. The wallet surface is the exception — a page the host has scripted cannot show
+Apple Pay, so there is no channel to hand it over, and the token travels in the fragment,
+which a browser does not send to a server.
+
+**The card never reaches your app.** The number and security code are rendered by the gateway
+in iframes on the page you host. What the page hands back is a one-time transient token.
+
+**The origin is checked on every call** and is baked into the capture context, which is why
+the page has to be served from the origin registered on your integration. The sheet refuses
+to load a page from anywhere else rather than showing an empty box.
+
+**A charge is idempotent per payment.** PayLink holds it behind a per-payment lock, so a
+double-tapped pay button is refused with `in_progress` rather than charged twice.
+
 ## Reading the return link
 
 The link is read by exact field name (`success`, `invoice_id`, `invoice_status`, `message`),

@@ -12,6 +12,32 @@
 library;
 
 export 'src/checkout.dart' show GetPayInCheckout;
+export 'src/sheet/amount.dart' show formatAmount;
+export 'src/sheet/card_fields_controller.dart' show CardFieldsController;
+export 'src/sheet/fields_page.dart'
+    show buildFieldsPageHtml, fieldsChannelName, walletPageUrl;
+export 'src/sheet/fields_protocol.dart'
+    show
+        FieldsAuthenticating,
+        FieldsCharging,
+        FieldsChanged,
+        FieldsError,
+        FieldsEvent,
+        FieldsPayment,
+        FieldsReady,
+        FieldsWalletError,
+        FieldsWalletReady,
+        parseFieldsEvent,
+        payCommand,
+        resultFromPayment,
+        startFieldsCommand;
+export 'src/sheet/fields_session.dart' show FieldsFailure, PayLinkFieldsSession;
+export 'src/sheet/payment_sheet.dart'
+    show GetPayInPaymentSheet, PaymentSheetConfiguration;
+export 'src/sheet/saved_card.dart' show CardBrand, PaymentWallet, SavedCard;
+export 'src/sheet/sheet_strings.dart' show PaymentSheetStrings;
+export 'src/sheet/sheet_style.dart' show PaymentSheetStyle;
+export 'src/sheet/wallet_surface.dart' show WalletSurface;
 export 'src/core/messages.dart';
 export 'src/core/navigation.dart'
     show NavigationContext, NavigationVerdict, classifyNavigation;

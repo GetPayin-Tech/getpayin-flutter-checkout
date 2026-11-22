@@ -37,7 +37,15 @@ enum CheckoutResultCode {
   wrongInvoice('wrong_invoice'),
 
   /// The link reported an invoice state that is not paid in full.
-  unexpectedInvoiceStatus('unexpected_invoice_status');
+  unexpectedInvoiceStatus('unexpected_invoice_status'),
+
+  /// The checkout could not be shown at all, so the payer never got to pay.
+  ///
+  /// Only the payment sheet reports this, and only with its fallback to the hosted
+  /// checkout turned off: nothing was charged and nothing was declined. With the fallback
+  /// on — which is the default — the payer is sent to the hosted checkout instead and this
+  /// never arrives.
+  checkoutUnavailable('checkout_unavailable');
 
   const CheckoutResultCode(this.wireName);
 
