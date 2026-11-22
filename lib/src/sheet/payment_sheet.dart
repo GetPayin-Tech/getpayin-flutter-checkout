@@ -35,6 +35,7 @@ class PaymentSheetConfiguration {
     this.billingCountries = defaultBillingCountries,
     this.billingCountry = 'EG',
     this.successPause = const Duration(milliseconds: 1200),
+    this.keepTheCard = false,
     this.expectedInvoiceId,
     this.amountLabel,
     this.wallets = const <PaymentWallet>[],
@@ -76,6 +77,16 @@ class PaymentSheetConfiguration {
 
   /// The country the billing form starts on, as an ISO 3166-1 alpha-2 code.
   final String billingCountry;
+
+  /// Whether the payer is asked to keep the card for next time, while paying with it.
+  ///
+  /// PayLink's own SDK draws that row and owns its wording, because the card networks want
+  /// explicit agreement before a credential is stored and only the party that showed the
+  /// words can evidence what was agreed to. The sheet gives it a place in the card box.
+  ///
+  /// Your company has to have card tokenization enabled, and the charge carries the
+  /// agreement with it. Nothing is kept without the payer ticking it.
+  final bool keepTheCard;
 
   /// How long the sheet says the payment went through before it closes.
   ///
@@ -207,6 +218,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     pageUrl: _config.fieldsPageUrl,
     pageHeaders: _config.fieldsPageHeaders,
     collectsBilling: _config.collectBillingAddress,
+    keepsTheCard: _config.keepTheCard,
     labels: _config.strings,
     style: _config.style,
     onPayment: _onPayment,
@@ -615,7 +627,8 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// box told to be shorter than its rows clips the last of them, and one told to be taller
   /// leaves a gap under the card that looks like a missing field.
   double get _cardBoxHeight {
-    final rows = _config.collectBillingAddress ? 3 : 2;
+    final rows =
+        (_config.collectBillingAddress ? 3 : 2) + (_config.keepTheCard ? 1 : 0);
 
     return _config.style.rowHeight * rows + 2;
   }
@@ -627,6 +640,10 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// was charged without it would never learn why their bank's address check failed.
   bool get _canPayByCard {
     if (!_card.isComplete) {
+      return false;
+    }
+
+    if (_config.keepTheCard && !_card.snapshot.hasConsent) {
       return false;
     }
 

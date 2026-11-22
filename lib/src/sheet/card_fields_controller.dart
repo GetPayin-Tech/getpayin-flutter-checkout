@@ -27,6 +27,7 @@ class CardFieldsController extends ChangeNotifier {
     required this.pageUrl,
     this.pageHeaders = const <String, String>{},
     this.collectsBilling = false,
+    this.keepsTheCard = false,
     this.labels = const PaymentSheetStrings(),
     this.style = const PaymentSheetStyle(),
     this.onPayment,
@@ -53,6 +54,13 @@ class CardFieldsController extends ChangeNotifier {
   /// every card form a payer has met, and a box whose rows are drawn by two engines cannot
   /// be kept aligned. The address it belongs to is drawn by the sheet.
   final bool collectsBilling;
+
+  /// Whether the box carries the row where the payer agrees to the card being kept.
+  ///
+  /// PayLink's own SDK writes that row, wording and all: the card networks want explicit
+  /// agreement before a credential is stored, and only the party that showed the words can
+  /// evidence what was agreed to. The sheet says where it goes, never what it says.
+  final bool keepsTheCard;
 
   /// What the box's own rows say before the payer types.
   ///
@@ -115,9 +123,15 @@ class CardFieldsController extends ChangeNotifier {
       return;
     }
 
+    if (keepsTheCard && !_snapshot.hasConsent) {
+      return;
+    }
+
     _apply(_snapshot.copyWith(charging: true).withMessage(null));
 
-    await _webView.runJavaScript(payCommand(billing: billing));
+    await _webView.runJavaScript(
+      payCommand(billing: billing, keepTheCard: keepsTheCard),
+    );
   }
 
   /// Takes the page down with the box.
@@ -183,6 +197,7 @@ class CardFieldsController extends ChangeNotifier {
         clientToken: session.clientToken,
         style: style.toCssVariables(),
         collectName: collectsBilling,
+        collectConsent: keepsTheCard,
         nameLabel: labels.nameOnCard,
         cardNumberLabel: labels.cardNumber,
         expiryLabel: labels.expiry,

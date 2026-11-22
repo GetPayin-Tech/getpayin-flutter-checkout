@@ -4,6 +4,9 @@ import 'fields_protocol.dart';
 /// Every field the gateway has to be holding before a card can be charged.
 const Set<String> _chargeable = <String>{'number', 'securityCode', 'expiry'};
 
+/// The row the gateway writes itself, where the payer agrees to the card being kept.
+const String consentField = 'consent';
+
 /// What the card box knows about itself, at one moment.
 ///
 /// Separate from the controller that drives the page, because what the box *is* and what it
@@ -53,6 +56,12 @@ class CardFieldsSnapshot {
 
   /// True when every field in the box holds something chargeable and the box is live.
   bool get isComplete => ready && valid.containsAll(_chargeable);
+
+  /// True once the payer has agreed to the card being kept.
+  ///
+  /// Asked separately from [isComplete] because a sheet that is not keeping the card has no
+  /// such row, and one that is cannot charge without it.
+  bool get hasConsent => valid.contains(consentField);
 
   /// A copy with the parts a single event can move replaced.
   ///

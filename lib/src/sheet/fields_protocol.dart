@@ -244,6 +244,7 @@ String startFieldsCommand({
   required Map<String, Object?> style,
   List<String> wallets = const <String>[],
   bool collectName = false,
+  bool collectConsent = false,
   String nameLabel = 'Name on card',
   String cardNumberLabel = 'Card number',
   String expiryLabel = 'MM / YY',
@@ -254,6 +255,7 @@ String startFieldsCommand({
     'wallets': wallets,
     'style': style,
     'collectName': collectName,
+    'collectConsent': collectConsent,
     'nameLabel': nameLabel,
     'cardNumberLabel': cardNumberLabel,
     'expiryLabel': expiryLabel,
@@ -280,9 +282,14 @@ String destroyCommand() =>
 /// sheet, the gateway's token holds no address of its own, and the page has nothing to add
 /// to one. Null for an address the charge would ignore, so the page is told the same thing
 /// in both cases rather than having to decide.
-String payCommand({BillingDetails? billing}) {
+String payCommand({BillingDetails? billing, bool keepTheCard = false}) {
   final wire = billing?.toWire() ?? const <String, Object?>{};
-  final argument = wire.isEmpty ? 'null' : jsonEncode(wire);
+  final asked = <String, Object?>{
+    if (wire.isNotEmpty) 'billing': wire,
+    if (keepTheCard) 'tokenize': true,
+  };
+
+  final argument = asked.isEmpty ? 'null' : jsonEncode(asked);
 
   return 'window.__paylinkHost && window.__paylinkHost.pay($argument);';
 }

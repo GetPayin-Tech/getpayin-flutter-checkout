@@ -223,8 +223,19 @@ void main() {
       expect(
         payCommand(billing: billing),
         'window.__paylinkHost && window.__paylinkHost.pay('
-        '{"firstName":"Ada","lastName":"Lovelace","country":"EG",'
-        '"city":"Cairo","address":"12 Noyes Street"});',
+        '{"billing":{"firstName":"Ada","lastName":"Lovelace","country":"EG",'
+        '"city":"Cairo","address":"12 Noyes Street"}});',
+      );
+    });
+
+    /*
+     * Keeping the card is asked for here and agreed to on the page: the wording belongs to
+     * PayLink's own SDK, so all the sheet can do is say that this charge means to keep it.
+     */
+    test('asks for the card to be kept, without claiming the agreement', () {
+      expect(
+        payCommand(keepTheCard: true),
+        'window.__paylinkHost && window.__paylinkHost.pay({"tokenize":true});',
       );
     });
 

@@ -569,6 +569,68 @@ void main() {
   });
 
   /*
+   * Keeping a card needs the payer's explicit agreement, and the party that showed the
+   * words is the only one that can evidence what was agreed to. So the row is PayLink's
+   * SDK's to draw: all the sheet does is ask for it, and refuse to charge without it.
+   */
+  group('keeping the card', () {
+    CardFieldsController keeping() => CardFieldsController(
+          session: testFieldsSession(),
+          pageUrl: testFieldsPageUrl,
+          keepsTheCard: true,
+        );
+
+    Future<void> fillTheCard(
+        WidgetTester tester, FakeWebViewController box) async {
+      box.finishLoading();
+      await tester.pump();
+
+      for (final field in <String>['number', 'securityCode', 'expiry']) {
+        box.post(
+            '{"type":"change","field":"$field","valid":true,"empty":false}');
+      }
+      box.post('{"type":"ready","amountMinor":9742,"currency":"USD"}');
+      await tester.pump();
+    }
+
+    testWidgets('has the page put the agreement in the box', (tester) async {
+      final controller = keeping();
+
+      webView.controllers.first.finishLoading();
+      await tester.pump();
+
+      expect(
+        webView.controllers.first.scripts.last,
+        contains('"collectConsent":true'),
+      );
+      controller.dispose();
+    });
+
+    testWidgets('will not charge a card the payer has not agreed to keep',
+        (tester) async {
+      final controller = keeping();
+      final box = webView.controllers.first;
+
+      await fillTheCard(tester, box);
+      await controller.pay();
+
+      expect(
+        box.scripts.where((script) => script.contains('.pay(')),
+        isEmpty,
+        reason: 'the agreement is what makes this charge chargeable',
+      );
+
+      box.post(
+          '{"type":"change","field":"consent","valid":true,"empty":false}');
+      await tester.pump();
+      await controller.pay();
+
+      expect(box.scripts.last, contains('"tokenize":true'));
+      controller.dispose();
+    });
+  });
+
+  /*
    * A page served through a development tunnel, or from a staging origin behind a gate,
    * can need a header before it will hand the page over at all. Without one the web view
    * loads the gate's own page where the card fields should be.

@@ -148,6 +148,28 @@ Three things are worth knowing before you switch it on:
 - **Email and phone are not part of it.** They keep their existing source, which is the
   payment your server created.
 
+## Keeping the card
+
+The card networks require the payer's explicit agreement before a card is kept on file, and
+whoever showed the words is the only party that can evidence what was agreed to. So the
+agreement is **PayLink's SDK's to draw**: the sheet gives it a row in the card box and
+refuses to charge until it is ticked, but the wording is not yours or ours to write.
+
+```dart
+PaymentSheetConfiguration(
+  keepTheCard: true,
+  // ...
+)
+```
+
+The charge then carries the agreement with it — what was shown, and when it was accepted.
+Nothing is kept if the payer leaves the row alone: the pay button simply stays off.
+
+Your company needs card tokenization enabled. Where it is not, or where PayLink declines to
+keep a card from an integrator's own form, `/init` says so and the payer goes to
+`checkout_url` instead — the same fallback the sheet already uses when the fields cannot
+run. See [Saving a card](saving-a-card.md) for the hosted route, which needs no sheet.
+
 ## Wallets
 
 Name both; the sheet shows the one that belongs on the phone — Apple Pay on iOS, Google Pay

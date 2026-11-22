@@ -65,6 +65,16 @@ String buildFieldsPageHtml(
   /* The gateway's wallet widget renders its own launchers at its own size. These are the
      same rules PayLink's own checkout puts around it, so the button is one row of this
      form rather than a panel sitting on top of one. */
+  /* PayLink's SDK writes this row, wording and all, so that it can evidence what the payer
+     agreed to. The page says where it sits and what it is drawn with, never what it says. */
+  #consent { min-height: var(--rowHeight, 56px); display: flex; align-items: center; }
+  #consent[hidden] { display: none; }
+  #consent [data-paylink-consent-row] {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    font-size: 14px; color: var(--text, #30313d);
+  }
+  #consent [data-paylink-consent] { width: 18px; height: 18px; accent-color: var(--accent, #0570de); }
+
   #wallet { min-height: var(--rowHeight, 56px); }
   #wallet .app { display: flex; flex: 1; gap: 12px; align-items: stretch; }
   #wallet .app > * { flex: 1 1 0; min-width: 0; width: auto; margin: 0; }
@@ -88,6 +98,7 @@ String buildFieldsPageHtml(
       </div>
     </div>
   </div>
+  <div id="consent" hidden></div>
   <div id="wallet" hidden></div>
 
 <script src=$script></script>
@@ -269,6 +280,11 @@ String buildFieldsPageHtml(
       }
     };
 
+    if (config.collectConsent) {
+      options.consent = '#consent';
+      document.getElementById('consent').hidden = false;
+    }
+
     if (wallets.length > 0) {
       options.wallets = wallets;
       options.wallet = '#wallet';
@@ -298,12 +314,14 @@ String buildFieldsPageHtml(
 
   window.__paylinkHost = {
     start: function (config) { start(config || {}, false); },
-    pay: function (billing) {
+    pay: function (options) {
       if (!fields) { return; }
 
+      var asked = options || {};
       var parts = expiry();
 
-      if (billing) { parts.billing = billing; }
+      if (asked.billing) { parts.billing = asked.billing; }
+      if (asked.tokenize) { parts.tokenize = true; }
 
       fields.pay(parts).then(function (result) {
         post({

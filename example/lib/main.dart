@@ -150,6 +150,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageUrl: _fieldsPage.text.trim(),
         fieldsPageHeaders: fieldsPageHeaders,
         collectBillingAddress: _collectBilling,
+        keepTheCard: _tokenize,
         returnUrl: returnUrl,
         expectedInvoiceId: session.invoiceId,
         amountLabel:
