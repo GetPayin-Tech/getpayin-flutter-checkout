@@ -151,6 +151,12 @@ class _Fallback extends _SheetOutcome {
 
 enum _Screen { methods, selectCard, newCard }
 
+/// How tall the card box grows for a 3-D Secure challenge.
+///
+/// The issuer's page is a page, not a row: it carries its own instructions, a one-time code
+/// field and a submit button, and a box sized for a card number would scroll all three.
+const double _challengeHeight = 480;
+
 class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   late final PaymentSheetConfiguration _config = widget.configuration;
 
@@ -399,18 +405,23 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     ];
   }
 
+  /// The card box with the whole sheet to itself, while the issuer's challenge is up.
+  ///
+  /// The SDK frames that challenge inside the box and it has to stay framed exactly that
+  /// way, so nothing is drawn over it and nothing around it can take the tap that answers
+  /// it.
+  List<Widget> _challenge() {
+    return <Widget>[
+      SizedBox(
+        height: _challengeHeight,
+        child: CardBox(controller: _card, style: _config.style),
+      ),
+    ];
+  }
+
   List<Widget> _newCard() {
-    /*
-     * While the issuer's challenge is up, the box is the whole sheet. The SDK frames that
-     * challenge itself and it has to stay framed exactly that way, so nothing is drawn over
-     * it and nothing around it can take the tap that answers it.
-     */
     if (_card.isAuthenticating) {
-      return <Widget>[
-        SizedBox(
-            height: 480,
-            child: CardBox(controller: _card, style: _config.style)),
-      ];
+      return _challenge();
     }
 
     return <Widget>[

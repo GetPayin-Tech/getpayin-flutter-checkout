@@ -114,13 +114,14 @@ String buildFieldsPageHtml(
     return digits.length < 3 ? digits : digits.slice(0, 2) + ' / ' + digits.slice(2);
   }
 
+  // True while the card is still in date. The last moment it is good for is the end of the
+  // month printed on it, so the first of the next month is the comparison.
   function expiryValid(parts) {
     var month = Number(parts.expirationMonth);
     var year = Number(parts.expirationYear);
 
     if (!(month >= 1 && month <= 12) || !(year >= 2000)) { return false; }
 
-    // The last moment the card is good for is the end of its month.
     return new Date(year, month, 1) > new Date();
   }
 
@@ -161,17 +162,19 @@ String buildFieldsPageHtml(
     });
     instance.on('error', fail);
 
-    if (!walletMode) { return; }
+    if (walletMode) { relayWalletOutcome(instance); }
+  }
 
-    // A wallet payer never calls pay(), so the outcome arrives as an event. With no channel
-    // to answer on, the page does what a browser would: it goes to the return link, which
-    // the host reads off the navigation.
-    instance.on('success', function (result) {
+  // A wallet payer never calls pay(), so the outcome arrives as an event. With no channel to
+  // answer on, the page does what a browser would: it goes to the return link, which the
+  // host reads off the navigation.
+  function relayWalletOutcome(instance) {
+    function go(result) {
       if (result && result.returnUrl) { window.location.href = result.returnUrl; }
-    });
-    instance.on('declined', function (result) {
-      if (result && result.returnUrl) { window.location.href = result.returnUrl; }
-    });
+    }
+
+    instance.on('success', go);
+    instance.on('declined', go);
   }
 
   function start(config, walletMode) {
@@ -242,17 +245,22 @@ String buildFieldsPageHtml(
   };
 
   // The wallet surface carries its configuration in the fragment, because a web view the
-  // host has scripted cannot show Apple Pay, so there is no channel to hand it over.
-  var hash = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
-  var token = hash.get('t');
+  // host has scripted cannot show Apple Pay, so there is no channel to hand it over. The
+  // card surface has one, and waits to be told.
+  function startFromFragment() {
+    var hash = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+    var token = hash.get('t');
 
-  if (token) {
+    if (!token) { return; }
+
     start({
       clientToken: token,
       wallets: (hash.get('w') || '').split(',').filter(Boolean),
       style: {}
     }, true);
   }
+
+  startFromFragment();
 })();
 </script>
 </body>

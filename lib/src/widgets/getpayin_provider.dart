@@ -181,19 +181,21 @@ class _CheckoutScreenState extends State<_CheckoutScreen> {
     }
   }
 
+  /// Whether the top bar is drawn, which is the payer's only way to close the checkout.
+  ///
+  /// A checkout that cannot load would otherwise be a blank screen, and with the bar hidden
+  /// there would be nothing to close it with. The session would never settle: the `open()`
+  /// future would stay pending and the guard would report busy for the rest of the process,
+  /// so every later checkout would be refused. A failure therefore always carries its own
+  /// way out, whatever the caller asked for.
+  bool get _headerShown =>
+      widget.request.options.headerShown || _loadError != null;
+
   @override
   Widget build(BuildContext context) {
     final options = widget.request.options;
     final loadError = _loadError;
-
-    /*
-     * A checkout that cannot load would otherwise be a blank screen, and with the top bar
-     * hidden there is nothing to close it with. The session would never settle: the
-     * `open()` future would stay pending and the guard would report busy for the rest of
-     * the process, so every later checkout would be refused. The failure therefore always
-     * carries its own way out.
-     */
-    final headerShown = options.headerShown || loadError != null;
+    final headerShown = _headerShown;
 
     return PopScope<void>(
       canPop: false,
