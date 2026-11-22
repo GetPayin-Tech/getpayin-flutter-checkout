@@ -23,6 +23,7 @@ export 'src/sheet/amount.dart' show formatAmount;
 export 'src/sheet/billing_countries.dart'
     show BillingCountry, billingRegionCountries, defaultBillingCountries;
 export 'src/sheet/billing_details.dart' show BillingDetails;
+export 'src/sheet/billing_regions.dart' show BillingRegion, billingRegionsOf;
 export 'src/sheet/billing_form.dart' show BillingFieldSet, BillingForm;
 export 'src/sheet/card_fields_controller.dart' show CardFieldsController;
 export 'src/sheet/card_fields_snapshot.dart'

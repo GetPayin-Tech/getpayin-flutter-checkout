@@ -67,6 +67,7 @@ class PaymentSheetStyle {
       'text': _css(text),
       'surface': _css(surface),
       'radius': '${radius}px',
+      'rowHeight': '${rowHeight}px',
     };
   }
 

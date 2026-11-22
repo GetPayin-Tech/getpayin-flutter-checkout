@@ -8,6 +8,7 @@ import 'card_fields_snapshot.dart';
 import 'fields_page.dart';
 import 'fields_protocol.dart';
 import 'fields_session.dart';
+import 'sheet_strings.dart';
 import 'sheet_style.dart';
 
 /// Drives the card box: the page that renders it, and everything it reports back.
@@ -26,7 +27,7 @@ class CardFieldsController extends ChangeNotifier {
     required this.pageUrl,
     this.pageHeaders = const <String, String>{},
     this.collectsBilling = false,
-    this.nameLabel = 'Name on card',
+    this.labels = const PaymentSheetStrings(),
     this.style = const PaymentSheetStyle(),
     this.onPayment,
     this.onFailure,
@@ -53,8 +54,12 @@ class CardFieldsController extends ChangeNotifier {
   /// be kept aligned. The address it belongs to is drawn by the sheet.
   final bool collectsBilling;
 
-  /// What that row says before the payer types, in the sheet's own language.
-  final String nameLabel;
+  /// What the box's own rows say before the payer types.
+  ///
+  /// The gateway renders two of the four, so their placeholders are set through it rather
+  /// than in the page's markup; they come from the same wording as the rest of the sheet so
+  /// a translated sheet does not have an English card box in the middle of it.
+  final PaymentSheetStrings labels;
 
   /// How the box is drawn, shared with the Flutter side of the sheet.
   final PaymentSheetStyle style;
@@ -178,7 +183,10 @@ class CardFieldsController extends ChangeNotifier {
         clientToken: session.clientToken,
         style: style.toCssVariables(),
         collectName: collectsBilling,
-        nameLabel: nameLabel,
+        nameLabel: labels.nameOnCard,
+        cardNumberLabel: labels.cardNumber,
+        expiryLabel: labels.expiry,
+        securityCodeLabel: labels.securityCode,
       ),
     );
   }

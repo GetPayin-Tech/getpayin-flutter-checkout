@@ -11,6 +11,9 @@ class PaymentSheetStrings {
     this.addNewCard = 'Add new card',
     this.cardInformation = 'Card information',
     this.nameOnCard = 'Name on card',
+    this.cardNumber = 'Card number',
+    this.expiry = 'MM / YY',
+    this.securityCode = 'CVC',
     this.billingAddress = 'Billing address',
     this.country = 'Country or region',
     this.addressLine = 'Address',
@@ -54,6 +57,15 @@ class PaymentSheetStrings {
 
   /// The placeholder in the card box's own name row.
   final String nameOnCard;
+
+  /// The placeholder in the card number field, which the gateway renders.
+  final String cardNumber;
+
+  /// The placeholder in the expiry field.
+  final String expiry;
+
+  /// The placeholder in the security code field, which the gateway renders.
+  final String securityCode;
 
   /// The label over the billing address.
   final String billingAddress;

@@ -231,6 +231,9 @@ String startFieldsCommand({
   List<String> wallets = const <String>[],
   bool collectName = false,
   String nameLabel = 'Name on card',
+  String cardNumberLabel = 'Card number',
+  String expiryLabel = 'MM / YY',
+  String securityCodeLabel = 'CVC',
 }) {
   final config = jsonEncode(<String, Object?>{
     'clientToken': clientToken,
@@ -238,6 +241,9 @@ String startFieldsCommand({
     'style': style,
     'collectName': collectName,
     'nameLabel': nameLabel,
+    'cardNumberLabel': cardNumberLabel,
+    'expiryLabel': expiryLabel,
+    'securityCodeLabel': securityCodeLabel,
   });
 
   return 'window.__paylinkHost && window.__paylinkHost.start($config);';

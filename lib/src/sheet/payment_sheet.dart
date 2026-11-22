@@ -200,7 +200,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     pageUrl: _config.fieldsPageUrl,
     pageHeaders: _config.fieldsPageHeaders,
     collectsBilling: _config.collectBillingAddress,
-    nameLabel: _config.strings.nameOnCard,
+    labels: _config.strings,
     style: _config.style,
     onPayment: _onPayment,
     onFailure: _onFieldsFailure,
@@ -529,7 +529,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       const SizedBox(height: 16),
       SectionLabel(_config.strings.cardInformation, style: _config.style),
       SizedBox(
-        height: _config.collectBillingAddress ? 146 : 98,
+        height: _cardBoxHeight,
         child: CardBox(controller: _card, style: _config.style),
       ),
       if (_config.collectBillingAddress) ...<Widget>[
@@ -553,6 +553,17 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         onPressed: _canPayByCard ? _payByCard : null,
       ),
     ];
+  }
+
+  /// Exactly as tall as the rows the page is drawing, plus the box's own border.
+  ///
+  /// The web view is given a height rather than finding one, so the two have to agree: a
+  /// box told to be shorter than its rows clips the last of them, and one told to be taller
+  /// leaves a gap under the card that looks like a missing field.
+  double get _cardBoxHeight {
+    final rows = _config.collectBillingAddress ? 3 : 2;
+
+    return _config.style.rowHeight * rows + 2;
   }
 
   /// Whether there is enough on the card screen to charge.

@@ -50,6 +50,19 @@ void main() {
   group('the billing form', () {
     const strings = PaymentSheetStrings();
 
+    testWidgets('starts on the first region rather than on nothing',
+        (tester) async {
+      await pumpForm(tester, country: 'US');
+
+      expect(find.text('Alabama'), findsOneWidget);
+      expect(
+        fields.detailsFor('Ada Lovelace').toWire()['state'],
+        'AL',
+        reason:
+            'a picker always has an answer, so the charge always carries one',
+      );
+    });
+
     testWidgets('asks for no region where the charge carries none',
         (tester) async {
       await pumpForm(tester);
@@ -92,13 +105,14 @@ void main() {
         (tester) async {
       await pumpForm(tester, country: 'US');
 
-      await tester.enterText(
-          find.widgetWithText(TextField, strings.state), 'NY');
-      await tester.pump();
+      await tester.tap(find.text('Alabama'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Alaska').last);
+      await tester.pumpAndSettle();
 
       final billed = fields.detailsFor('Ada Lovelace').toWire();
 
-      expect(billed['state'], 'NY');
+      expect(billed['state'], 'AK');
 
       fields.country = 'EG';
 

@@ -491,7 +491,7 @@ void main() {
         session: testFieldsSession(),
         pageUrl: testFieldsPageUrl,
         collectsBilling: true,
-        nameLabel: 'Nom sur la carte',
+        labels: const PaymentSheetStrings(nameOnCard: 'Nom sur la carte'),
       );
 
       webView.controllers.first.finishLoading();
@@ -504,6 +504,10 @@ void main() {
       expect(
         webView.controllers.first.scripts.last,
         contains('"nameLabel":"Nom sur la carte"'),
+      );
+      expect(
+        webView.controllers.first.scripts.last,
+        contains('"cardNumberLabel":"Card number"'),
       );
       controller.dispose();
     });

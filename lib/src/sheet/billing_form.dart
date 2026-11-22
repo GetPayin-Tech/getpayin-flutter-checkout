@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'billing_countries.dart';
 import 'billing_details.dart';
+import 'billing_regions.dart';
 import 'sheet_strings.dart';
 import 'sheet_style.dart';
 
@@ -19,14 +20,16 @@ class BillingFieldSet {
 
   final TextEditingController _address = TextEditingController();
   final TextEditingController _city = TextEditingController();
-  final TextEditingController _state = TextEditingController();
   final TextEditingController _postalCode = TextEditingController();
+
+  /// The region the payer chose, for a country that has a list of them.
+  String? region;
 
   /// The country the payer is billed in, as an ISO 3166-1 alpha-2 code.
   String country;
 
   /// True where this country's region is one the charge carries.
-  bool get hasRegion => billingRegionCountries.contains(country);
+  bool get hasRegion => billingRegionsOf(country).isNotEmpty;
 
   /// The address as the payer has it so far, billed to [name].
   ///
@@ -36,7 +39,8 @@ class BillingFieldSet {
     return BillingDetails(
       name: name,
       country: country,
-      state: hasRegion ? _state.text : null,
+      state:
+          hasRegion ? (region ?? billingRegionsOf(country).first.code) : null,
       city: _city.text,
       address: _address.text,
       postalCode: _postalCode.text,
@@ -47,7 +51,6 @@ class BillingFieldSet {
   void dispose() {
     _address.dispose();
     _city.dispose();
-    _state.dispose();
     _postalCode.dispose();
   }
 }
@@ -84,12 +87,27 @@ class BillingForm extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final regions = billingRegionsOf(fields.country);
     final rows = <Widget>[
-      _country(context),
+      _picker(
+        label: strings.country,
+        value: fields.country,
+        options: <(String, String)>[
+          for (final country in countries) (country.code, country.name),
+        ],
+        onChosen: (chosen) => fields.country = chosen,
+      ),
       _row(fields._address, strings.addressLine, TextInputType.streetAddress),
       _row(fields._city, strings.city, TextInputType.text),
-      if (fields.hasRegion)
-        _row(fields._state, _regionLabel, TextInputType.text),
+      if (regions.isNotEmpty)
+        _picker(
+          label: _regionLabel,
+          value: fields.region ?? regions.first.code,
+          options: <(String, String)>[
+            for (final region in regions) (region.code, region.name),
+          ],
+          onChosen: (chosen) => fields.region = chosen,
+        ),
       _row(fields._postalCode, _postalLabel, TextInputType.text),
     ];
 
@@ -147,8 +165,16 @@ class BillingForm extends StatelessWidget {
     );
   }
 
-  /// The country row, which names itself above its answer the way a card form does.
-  Widget _country(BuildContext context) {
+  /// A row the payer chooses from rather than types into.
+  ///
+  /// Named above its answer rather than beside it, because a chosen value is already there
+  /// to read and a placeholder would have nowhere to go once it was.
+  Widget _picker({
+    required String label,
+    required String value,
+    required List<(String, String)> options,
+    required void Function(String chosen) onChosen,
+  }) {
     return SizedBox(
       height: style.rowHeight + 12,
       child: Padding(
@@ -157,13 +183,10 @@ class BillingForm extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              strings.country,
-              style: TextStyle(fontSize: 12, color: style.mutedText),
-            ),
+            Text(label, style: TextStyle(fontSize: 12, color: style.mutedText)),
             DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: fields.country,
+                value: value,
                 isExpanded: true,
                 isDense: true,
                 iconEnabledColor: style.mutedText,
@@ -174,15 +197,14 @@ class BillingForm extends StatelessWidget {
                     return;
                   }
 
-                  fields.country = chosen;
+                  onChosen(chosen);
                   onChanged();
                 },
                 items: <DropdownMenuItem<String>>[
-                  for (final country in countries)
+                  for (final (code, name) in options)
                     DropdownMenuItem<String>(
-                      value: country.code,
-                      child:
-                          Text(country.name, overflow: TextOverflow.ellipsis),
+                      value: code,
+                      child: Text(name, overflow: TextOverflow.ellipsis),
                     ),
                 ],
               ),
