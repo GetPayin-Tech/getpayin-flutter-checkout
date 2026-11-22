@@ -1,0 +1,68 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # The formatter is the authority on layout, so a diff is a failure.
+      - run: dart format --output=none --set-exit-if-changed .
+
+      - run: flutter analyze
+
+      - name: Lint the documentation
+        run: npx --yes markdownlint-cli@0.50.0 '**/*.md'
+
+      - run: flutter test --coverage
+
+      # The decision-making layers carry the payment rules, and they are gated.
+      - name: Check coverage of the rules
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          # Everything but the two plugin constructors, which only a phone can reach.
+          allowed = {
+              'lib/src/sessions/deep_link.dart': 6,
+              'lib/src/widgets/getpayin_checkout_view.dart': 2,
+          }
+          missed = {}
+          current = None
+
+          for line in open('coverage/lcov.info'):
+              line = line.strip()
+              if line.startswith('SF:'):
+                  current = line[3:]
+                  missed[current] = 0
+              elif line.startswith('DA:') and line.split(',')[1] == '0':
+                  missed[current] += 1
+
+          failures = []
+
+          for path, count in missed.items():
+              # lcov reports an absolute path, whatever the checkout is called.
+              name = 'lib/' + path.split('lib/', 1)[1] if 'lib/' in path else path
+              if count > allowed.get(name, 0):
+                  failures.append(f'{name}: {count} uncovered lines')
+
+          if failures:
+              print('\n'.join(failures))
+              sys.exit(1)
+
+          print('every rule is covered')
+          PY
+
+      - run: flutter pub publish --dry-run

@@ -1,0 +1,41 @@
+name: getpayin_flutter_checkout
+description: >-
+  Take Apple Pay, Google Pay and card payments inside a Flutter app with the
+  hosted GetPayIn checkout.
+version: 0.1.0
+repository: https://github.com/GetPayin-Tech/getpayin-flutter-checkout
+issue_tracker: https://github.com/GetPayin-Tech/getpayin-flutter-checkout/issues
+documentation: https://github.com/GetPayin-Tech/getpayin-flutter-checkout#readme
+
+topics:
+  - payments
+  - apple-pay
+  - google-pay
+  - checkout
+  - webview
+
+environment:
+  sdk: ^3.6.0
+  flutter: '>=3.27.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # The in-app checkout screen. webview_flutter_android is a direct dependency
+  # because Google Pay needs its setPaymentRequestEnabled, added in 4.10.0.
+  webview_flutter: ^4.13.0
+  webview_flutter_android: ^4.10.0
+  # The browser sheet (Chrome Custom Tabs, SFSafariViewController) and the
+  # external links a 3-D Secure step sends the payer to.
+  url_launcher: ^6.3.0
+  # The return link arriving as a deep link while the browser sheet is open.
+  app_links: '>=6.3.0 <8.0.0'
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: '>=5.0.0 <7.0.0'
+  # The suite stands a fake web view in for the real one, which means implementing the
+  # platform interface webview_flutter talks to.
+  webview_flutter_platform_interface: ^2.13.0
+  url_launcher_platform_interface: ^2.3.0

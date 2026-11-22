@@ -1,0 +1,17 @@
+name: getpayin_flutter_checkout_example
+description: Takes a payment with the hosted GetPayIn checkout.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ^3.6.0
+  flutter: '>=3.27.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  getpayin_flutter_checkout:
+    path: ../
+
+dev_dependencies:
+  flutter_lints: '>=5.0.0 <7.0.0'
