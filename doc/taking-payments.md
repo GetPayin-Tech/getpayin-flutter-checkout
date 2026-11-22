@@ -33,8 +33,6 @@ Future<void> pay(Order order) async {
     case CheckoutStatus.paid:
       await myApi.confirmPayment(result.invoiceId);
     case CheckoutStatus.notPaid:
-      // A code means the package refused the link, not that the card was declined: the
-      // payer may have paid, so check the invoice rather than asking them to pay again.
       if (result.code != null) {
         await myApi.checkInvoice(payment.invoiceId);
       }
@@ -44,6 +42,9 @@ Future<void> pay(Order order) async {
   }
 }
 ```
+
+A `code` means the package refused the link rather than the card being declined. The payer
+may well have paid, so check the invoice instead of asking them to pay again.
 
 Pass `checkoutUrl` **in memory**. A route parameter decodes it twice and the checkout
 answers HTTP 403.
@@ -101,7 +102,7 @@ Every failure arrives as a failed future, so one `catch` covers them all:
 try {
   final result = await GetPayInCheckout.open(checkoutUrl, options);
 } on GetPayInSessionBusyError {
-  return; // a double tap on Pay, ignore it
+  return;
 }
 ```
 
@@ -111,7 +112,8 @@ try {
 | `GetPayInProviderMissingError` | An in-app checkout with no `GetPayInProvider` mounted, or one that cannot reach a `Navigator`.                     |
 | `GetPayInSessionBusyError`     | Another checkout is still open. Usually a double tap.                                                              |
 
-A double tap on Pay is the common one. Either guard the button with
+That one is a double tap on Pay, which is worth ignoring rather than reporting. It is the
+common one. Either guard the button with
 `GetPayInCheckout.busy`, or catch and ignore `GetPayInSessionBusyError` as above.
 
 One mistake the package cannot catch: `expectedInvoiceId: null` means "no invoice to bind
@@ -144,11 +146,11 @@ You do not choose this per call; the platform does, with one setting for Android
 | Android  | `true`            | Your app's own screen     |
 
 Keep `googlePayInApp: false` until Google has approved your app. See
-[Google Pay on Android](google-pay.md). To show the payer, or a diagnostic screen, which
-one a build will use:
+[Google Pay on Android](google-pay.md). To show the payer, or a diagnostic screen, which one a
+build will use, ask for it. It answers `inApp` or `browser`:
 
 ```dart
-GetPayInCheckout.presentationFor(googlePayInApp: false); // inApp | browser
+GetPayInCheckout.presentationFor(googlePayInApp: false);
 ```
 
 ## Using your own screen

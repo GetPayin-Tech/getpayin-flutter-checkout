@@ -44,9 +44,12 @@ writing the code first.
 
 ## The fakes
 
+`FakeWebViewPlatform` stands in for every web view the app opens, `FakeUrlLauncher` for
+every link and browser sheet, and `FakeDeepLinks` for the return link:
+
 ```dart
-final webView = FakeWebViewPlatform.install();   // every web view the app opens
-final launcher = FakeUrlLauncher.install();      // every link and browser sheet
+final webView = FakeWebViewPlatform.install();
+final launcher = FakeUrlLauncher.install();
 returnLinkWatcher = ReturnLinkWatcher(source: FakeDeepLinks().source);
 ```
 

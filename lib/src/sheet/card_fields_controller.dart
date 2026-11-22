@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'card_fields_snapshot.dart';
 import 'fields_page.dart';
 import 'fields_protocol.dart';
 import 'fields_session.dart';
@@ -50,40 +51,34 @@ class CardFieldsController extends ChangeNotifier {
   WebViewController get webView => _webView;
 
   bool _disposed = false;
-  bool _ready = false;
-  bool _authenticating = false;
-  bool _charging = false;
-  int? _amountMinor;
-  String? _currency;
-  String? _errorMessage;
-  final Set<String> _validFields = <String>{};
+  CardFieldsSnapshot _snapshot = const CardFieldsSnapshot();
+
+  /// Everything the box knows about itself, for a sheet that wants it in one piece.
+  CardFieldsSnapshot get snapshot => _snapshot;
 
   /// True once the fields are live and the gateway has priced the payment.
-  bool get isReady => _ready;
+  bool get isReady => _snapshot.ready;
 
   /// True while the issuer's 3-D Secure challenge is up.
   ///
   /// The challenge is framed by the SDK inside this web view and must stay framed that way,
   /// so the sheet gives the box the whole screen rather than drawing anything over it.
-  bool get isAuthenticating => _authenticating;
+  bool get isAuthenticating => _snapshot.authenticating;
 
   /// True once the charge is running and can no longer be called off.
-  bool get isCharging => _charging;
+  bool get isCharging => _snapshot.charging;
 
   /// What will actually be charged, in minor units, once the gateway has said.
-  int? get amountMinor => _amountMinor;
+  int? get amountMinor => _snapshot.amountMinor;
 
   /// The currency it will be charged in, once the gateway has said.
-  String? get currency => _currency;
+  String? get currency => _snapshot.currency;
 
   /// The last thing worth showing the payer about the card they entered.
-  String? get errorMessage => _errorMessage;
+  String? get errorMessage => _snapshot.errorMessage;
 
   /// True when every field in the box holds something chargeable.
-  bool get isComplete =>
-      _ready &&
-      _validFields
-          .containsAll(const <String>{'number', 'securityCode', 'expiry'});
+  bool get isComplete => _snapshot.isComplete;
 
   /// Charges the card in the box.
   ///
@@ -91,13 +86,11 @@ class CardFieldsController extends ChangeNotifier {
   /// `in_progress` anyway, and a payer who taps twice should not be told their payment
   /// failed.
   Future<void> pay() async {
-    if (!isComplete || _charging || _authenticating) {
+    if (!isComplete || isCharging || isAuthenticating) {
       return;
     }
 
-    _charging = true;
-    _errorMessage = null;
-    notifyListeners();
+    _apply(_snapshot.copyWith(charging: true).withMessage(null));
 
     await _webView.runJavaScript(payCommand());
   }
@@ -156,7 +149,7 @@ class CardFieldsController extends ChangeNotifier {
   }
 
   Future<void> _start() async {
-    if (_ready) {
+    if (isReady) {
       return;
     }
 
@@ -175,31 +168,30 @@ class CardFieldsController extends ChangeNotifier {
       return;
     }
 
-    switch (event) {
-      case FieldsReady(:final amountMinor, :final currency):
-        _ready = true;
-        _amountMinor = amountMinor;
-        _currency = currency;
-      case FieldsChanged(:final field, :final valid, :final empty):
-        valid ? _validFields.add(field) : _validFields.remove(field);
-        if (!empty && !valid) {
-          _errorMessage = null;
-        }
-      case FieldsAuthenticating():
-        _authenticating = true;
-      case FieldsCharging():
-        _charging = true;
-      case FieldsPayment():
-        _charging = false;
-        _authenticating = false;
-        onPayment?.call(event);
-      case FieldsError():
-        _fail(event);
-        return;
-      case FieldsWalletReady() || FieldsWalletError():
-        return;
+    if (event is FieldsError) {
+      _fail(event);
+
+      return;
     }
 
+    _apply(applyFieldsEvent(_snapshot, event));
+
+    if (event is FieldsPayment) {
+      onPayment?.call(event);
+    }
+  }
+
+  /// Replaces what the box knows, and tells its listeners only when something moved.
+  ///
+  /// An event that says nothing about this box, which is any of the wallet's, hands back
+  /// the snapshot it was given, and a sheet that rebuilt for it would be rebuilding for the
+  /// surface next door.
+  void _apply(CardFieldsSnapshot next) {
+    if (identical(next, _snapshot)) {
+      return;
+    }
+
+    _snapshot = next;
     notifyListeners();
   }
 
@@ -208,10 +200,7 @@ class CardFieldsController extends ChangeNotifier {
       return;
     }
 
-    _charging = false;
-    _authenticating = false;
-    _errorMessage = error.message;
-    notifyListeners();
+    _apply(applyFieldsEvent(_snapshot, error));
     onFailure?.call(error);
   }
 }

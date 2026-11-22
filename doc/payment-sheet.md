@@ -74,11 +74,13 @@ Your server creates the payment with `mode: "fields"` and passes the response on
 }
 ```
 
-Then the sheet is one call:
+Then the sheet is one call. `createPayment` is your server calling `/init`, and
+`fromInit` answers null when hosted fields are off for the company, which is your cue to
+use `checkout_url`. `savedCards` comes from your own backend:
 
 ```dart
-final payment = await myApi.createPayment(order);          // your server calls /init
-final session = PayLinkFieldsSession.fromInit(payment)!;   // null if fields are off
+final payment = await myApi.createPayment(order);
+final session = PayLinkFieldsSession.fromInit(payment)!;
 
 final result = await GetPayInPaymentSheet.show(
   context,
@@ -89,7 +91,7 @@ final result = await GetPayInPaymentSheet.show(
     expectedInvoiceId: session.invoiceId,
     amountLabel: r'$97.42',
     wallets: const [PaymentWallet.applePay, PaymentWallet.googlePay],
-    savedCards: cards,                                     // from your own backend
+    savedCards: cards,
     chargeSavedCard: (card) => myApi.chargeSavedCard(card.id),
   ),
 );

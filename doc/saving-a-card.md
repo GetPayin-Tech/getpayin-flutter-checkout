@@ -22,8 +22,12 @@ as `notPaid`, because the invoice is `VOIDED` rather than `PAID`.
 
 ## Taking one
 
+`startCardSave` is your server calling `/tokens/init`. By the time the run comes back
+`saved`, the `card_token.created` webhook has brought your server the token, so the app
+only has to ask for the list again.
+
 ```dart
-final run = await myApi.startCardSave();       // your server calls /tokens/init
+final run = await myApi.startCardSave();
 
 final result = await GetPayInCheckout.saveCard(
   run.tokenizationUrl,
@@ -36,7 +40,7 @@ final result = await GetPayInCheckout.saveCard(
 
 switch (result.status) {
   case CardSaveStatus.saved:
-    await myApi.refreshSavedCards();           // the webhook brought you the token
+    await myApi.refreshSavedCards();
   case CardSaveStatus.notSaved:
     showMessage(result.message ?? 'The card could not be saved.');
   case CardSaveStatus.cancelled:

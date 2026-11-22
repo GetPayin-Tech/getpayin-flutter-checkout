@@ -108,6 +108,24 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('hands everything it knows over in one piece', (tester) async {
+      final controller = build()..webView;
+
+      await tester.pump();
+      webView.controllers.first.post(
+        jsonEncode(<String, Object?>{
+          'type': 'ready',
+          'amountMinor': 9742,
+          'currency': 'USD',
+        }),
+      );
+
+      expect(controller.snapshot.ready, isTrue);
+      expect(controller.snapshot.amountMinor, 9742);
+      expect(controller.snapshot.isComplete, isFalse);
+      controller.dispose();
+    });
+
     testWidgets('will not charge a box that is not filled in', (tester) async {
       final controller = build()..webView;
 

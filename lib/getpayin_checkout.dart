@@ -21,6 +21,8 @@ export 'src/card_save.dart'
 export 'src/checkout.dart' show GetPayInCheckout;
 export 'src/sheet/amount.dart' show formatAmount;
 export 'src/sheet/card_fields_controller.dart' show CardFieldsController;
+export 'src/sheet/card_fields_snapshot.dart'
+    show CardFieldsSnapshot, applyFieldsEvent;
 export 'src/sheet/fields_page.dart'
     show buildFieldsPageHtml, fieldsChannelName, walletPageUrl;
 export 'src/sheet/fields_protocol.dart'

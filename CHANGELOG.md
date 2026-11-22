@@ -54,6 +54,9 @@ proves it was there:
 
 ### Changed
 
+- `CardFieldsSnapshot` and `applyFieldsEvent` are exported: what the card box knows is now a
+  value, and what an event means to it is a pure function over that value. The controller
+  keeps the page and the channel, which is the thing that changes for a different reason.
 - The package is `getpayin_checkout`, so an app writes
   `import 'package:getpayin_checkout/getpayin_checkout.dart';`. It was
   `getpayin_flutter_checkout`, which said "Flutter" to an audience already writing Dart.

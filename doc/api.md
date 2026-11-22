@@ -59,10 +59,18 @@ The token is not in the result and never reaches the app. It arrives on your ser
 
 ```dart
 class CardSaveResult {
-  final CardSaveStatus status;      // saved | notSaved | cancelled
-  final String? invoiceId;          // the verification invoice
-  final String? verificationStatus; // AUTHORIZED, VOIDED, CAPTURED — never PAID
-  final CheckoutResultCode? code;   // unreadableReturnLink or wrongInvoice, or null
+  /// `saved`, `notSaved` or `cancelled`.
+  final CardSaveStatus status;
+
+  /// The verification invoice the run went against.
+  final String? invoiceId;
+
+  /// `AUTHORIZED`, `VOIDED` or `CAPTURED`. Never `PAID`.
+  final String? verificationStatus;
+
+  /// `unreadableReturnLink` or `wrongInvoice`, and null for a card simply refused.
+  final CheckoutResultCode? code;
+
   final String? message;
   final String? returnUrl;
 

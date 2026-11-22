@@ -38,9 +38,11 @@ Declare the schemes your app answers to, and mount the provider once.
 import 'package:flutter/material.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
 
+/// Declares every scheme this app answers to, before anything can be paid for.
+///
+/// The checkout refuses all of them, so a page inside it cannot reach the app's own
+/// deep-link routes.
 void main() {
-  // The checkout refuses every scheme listed here, so a page inside it cannot reach your
-  // app's own deep-link routes.
   declareHostAppSchemes(const ['myapp']);
   runApp(const MyApp());
 }
@@ -58,20 +60,27 @@ class MyApp extends StatelessWidget {
 Then take a payment.
 
 ```dart
-// Your server calls POST /api/v2/integration/init and sends back checkout_url.
-final payment = await myApi.createPayment(order);
+/// Takes one payment, and has your server confirm it.
+///
+/// `createPayment` is your own server calling `POST /api/v2/integration/init`, which hands
+/// back `checkout_url` and the invoice id. `returnUrl` has to match the integration's
+/// Mobile App Return Scheme, `expectedInvoiceId` ties the result to this checkout, and
+/// `googlePayInApp` stays false until Google has approved the app.
+Future<void> pay(Order order) async {
+  final payment = await myApi.createPayment(order);
 
-final result = await GetPayInCheckout.open(
-  payment.checkoutUrl,
-  OpenCheckoutOptions(
-    returnUrl: 'myapp://payment-return',   // must match your Mobile App Return Scheme
-    expectedInvoiceId: payment.invoiceId,  // ties the result to this checkout
-    googlePayInApp: false,                 // true only after Google approves your app
-  ),
-);
+  final result = await GetPayInCheckout.open(
+    payment.checkoutUrl,
+    OpenCheckoutOptions(
+      returnUrl: 'myapp://payment-return',
+      expectedInvoiceId: payment.invoiceId,
+      googlePayInApp: false,
+    ),
+  );
 
-if (result.status == CheckoutStatus.paid) {
-  await myApi.confirmPayment(result.invoiceId);
+  if (result.status == CheckoutStatus.paid) {
+    await myApi.confirmPayment(result.invoiceId);
+  }
 }
 ```
 

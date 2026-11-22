@@ -52,6 +52,12 @@ class CheckoutPage extends StatefulWidget {
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
+  /// Draw the checkout in the app's own screen on Android.
+  ///
+  /// Off until Google has approved the app, because before that an Android payer gets an
+  /// app screen with no Google Pay button and no error saying why.
+  static const bool _googlePayInApp = false;
+
   String _status = 'Ready';
   bool _paying = false;
 
@@ -69,8 +75,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         OpenCheckoutOptions(
           returnUrl: returnUrl,
           expectedInvoiceId: payment.invoiceId,
-          // Leave this off until Google has approved the app for in-app Google Pay.
-          googlePayInApp: false,
+          googlePayInApp: _googlePayInApp,
           title: 'Pay for your order',
         ),
       );

@@ -30,8 +30,11 @@ checkout to look like part of their app, and tell them what it costs before buil
 
 ## Quick start — the hosted checkout
 
+In `main.dart`, declare every scheme the app answers to and mount the provider once:
+
 ```dart
-// 1. main.dart: declare every scheme the app answers to, then mount the provider once
+/// The checkout refuses every scheme declared here, so a page inside it cannot reach the
+/// app's own deep-link routes.
 void main() {
   declareHostAppSchemes(const ['myapp']);
   runApp(const MyApp());
@@ -40,26 +43,34 @@ void main() {
 MaterialApp(home: GetPayInProvider(child: const ShopPage()))
 ```
 
+Then take a payment:
+
 ```dart
-// 2. Take a payment
-final payment = await myApi.createPayment(order); // your server calls POST /v2/integration/init
+/// Takes one payment.
+///
+/// `createPayment` is the integrator's own server calling `POST /v2/integration/init`.
+/// `googlePayInApp` stays false until Google has approved the app.
+Future<void> pay(Order order) async {
+  final payment = await myApi.createPayment(order);
 
-final result = await GetPayInCheckout.open(
-  payment.checkoutUrl,
-  OpenCheckoutOptions(
-    returnUrl: 'myapp://payment-return',
-    expectedInvoiceId: payment.invoiceId,
-    googlePayInApp: false, // true only after Google approves the app
-  ),
-);
+  final result = await GetPayInCheckout.open(
+    payment.checkoutUrl,
+    OpenCheckoutOptions(
+      returnUrl: 'myapp://payment-return',
+      expectedInvoiceId: payment.invoiceId,
+      googlePayInApp: false,
+    ),
+  );
 
-if (result.status == CheckoutStatus.paid) {
-  await myApi.confirmPayment(result.invoiceId);
+  if (result.status == CheckoutStatus.paid) {
+    await myApi.confirmPayment(result.invoiceId);
+  }
 }
 ```
 
+With `go_router`, add the redirect, or payers land on an unmatched route after paying:
+
 ```dart
-// 3. go_router only, or payers land on an unmatched route after paying
 final paymentReturn = PaymentReturnRedirect('myapp://payment-return');
 
 GoRouter(redirect: (context, state) => paymentReturn.redirectFor(state.uri.toString()));
@@ -73,7 +84,7 @@ GoRouter(redirect: (context, state) => paymentReturn.redirectFor(state.uri.toStr
 final result = await GetPayInPaymentSheet.show(
   context,
   PaymentSheetConfiguration(
-    session: PayLinkFieldsSession.fromInit(payment)!, // /init with mode: "fields"
+    session: PayLinkFieldsSession.fromInit(payment)!,
     fieldsPageUrl: 'https://shop.example.com/paylink-fields.html',
     returnUrl: 'myapp://payment-return',
     expectedInvoiceId: invoiceId,
