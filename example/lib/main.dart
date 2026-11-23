@@ -130,6 +130,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _step;
   CheckoutResult? _result;
   String? _failure;
+  String? _note;
 
   @override
   void dispose() {
@@ -149,6 +150,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _busy = true;
       _result = null;
       _failure = null;
+      _note = null;
       _step = 'Creating the payment…';
     });
 
@@ -210,7 +212,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     PayLinkFieldsSession? session,
   ) async {
     if (_useSheet) {
-      setState(() => _failure = _whySheetIsNotShowing(payment, session));
+      setState(() => _note = _whySheetIsNotShowing(payment, session));
     }
 
     return GetPayInCheckout.open(
@@ -224,7 +226,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  /// What is standing between this payment and the sheet.
+  /// Why this payment went to the hosted checkout rather than onto the sheet.
+  ///
+  /// Not a failure, and not shown as one: every branch below is a payment PayLink is willing
+  /// to take somewhere else, and the payer takes it there. Saying "it would not open" over a
+  /// payment that went through is the harness lying about its own result.
   String _whySheetIsNotShowing(
       _Payment payment, PayLinkFieldsSession? session) {
     if (payment.fieldsError != null) {
@@ -283,6 +289,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Widget build(BuildContext context) {
     final result = _result;
     final failure = _failure;
+    final note = _note;
 
     return Scaffold(
       appBar: AppBar(
@@ -456,6 +463,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
             'app. In production your own backend signs the request.',
             style: TextStyle(fontSize: 13, color: Color(0xFF8A8B94)),
           ),
+          if (note != null) ...<Widget>[
+            const SizedBox(height: 16),
+            _Outcome(
+                title: 'Taken on the hosted checkout', lines: <String>[note]),
+          ],
           if (failure != null) ...<Widget>[
             const SizedBox(height: 16),
             _Outcome(title: 'It would not open', lines: <String>[failure]),
