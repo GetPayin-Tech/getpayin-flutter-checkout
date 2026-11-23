@@ -63,11 +63,27 @@ class ExampleApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'GetPayIn checkout',
-      theme: ThemeData(colorSchemeSeed: const Color(0xFF0570DE)),
+      theme: ThemeData(
+        colorSchemeSeed: brand,
+        scaffoldBackgroundColor: canvas,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: brand,
+          foregroundColor: Colors.white,
+        ),
+      ),
       home: GetPayInProvider(child: const CheckoutPage()),
     );
   }
 }
+
+/// GetPayIn's own green, so the harness looks like the product it is testing.
+const Color brand = Color(0xFF009C95);
+
+/// What the page is drawn on, behind the cards.
+const Color canvas = Color(0xFFF1F5F4);
+
+/// The currencies the demo offers, which is what the integration is set up for.
+const List<String> currencies = <String>['EGP', 'EUR', 'USD'];
 
 /// The one screen: what to charge, how to open it, and what came back.
 class CheckoutPage extends StatefulWidget {
@@ -79,8 +95,15 @@ class CheckoutPage extends StatefulWidget {
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
+  final TextEditingController _firstName = TextEditingController(text: 'John');
+  final TextEditingController _lastName = TextEditingController(text: 'Doe');
+  final TextEditingController _email = TextEditingController(
+    text: 'john.doe@example.com',
+  );
+  final TextEditingController _title = TextEditingController(
+    text: 'Wireless Headphones x1',
+  );
   final TextEditingController _amount = TextEditingController(text: '10.00');
-  final TextEditingController _currency = TextEditingController(text: 'EGP');
   final TextEditingController _server = TextEditingController(
     text: defaultPaymentsServer,
   );
@@ -88,6 +111,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     text: defaultFieldsPage,
   );
 
+  String _currency = 'EGP';
   bool _googlePayInApp = false;
   bool _useSheet = false;
   bool _collectBilling = false;
@@ -99,8 +123,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   @override
   void dispose() {
+    _firstName.dispose();
+    _lastName.dispose();
+    _email.dispose();
+    _title.dispose();
     _amount.dispose();
-    _currency.dispose();
     _server.dispose();
     _fieldsPage.dispose();
     super.dispose();
@@ -153,8 +180,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         keepTheCard: _tokenize,
         returnUrl: returnUrl,
         expectedInvoiceId: session.invoiceId,
-        amountLabel:
-            '${_amount.text.trim()} ${_currency.text.trim().toUpperCase()}',
+        amountLabel: _priced,
         wallets: const <PaymentWallet>[
           PaymentWallet.applePay,
           PaymentWallet.googlePay,
@@ -182,7 +208,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         returnUrl: returnUrl,
         expectedInvoiceId: invoiceIdInCheckoutUrl(payment.checkoutUrl),
         googlePayInApp: _googlePayInApp,
-        title: 'Pay for your order',
+        title: _title.text.trim(),
       ),
     );
   }
@@ -211,9 +237,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
       Uri.parse(_server.text.trim()),
       headers: const <String, String>{'Content-Type': 'application/json'},
       body: jsonEncode(<String, Object?>{
+        'first_name': _firstName.text.trim(),
+        'last_name': _lastName.text.trim(),
+        'email': _email.text.trim(),
         'amount': _amount.text.trim(),
-        'currency': _currency.text.trim().toUpperCase(),
-        'title': 'Example order',
+        'currency': _currency,
+        'title': _title.text.trim(),
         'hosted_fields': _useSheet,
         'tokenize': _tokenize,
       }),
@@ -236,116 +265,192 @@ class _CheckoutPageState extends State<CheckoutPage> {
       GetPayInCheckout.presentationFor(googlePayInApp: _googlePayInApp)
           .wireName;
 
+  /// What the pay button says, and what the sheet labels its own.
+  String get _priced => '${_amount.text.trim()} $_currency'.trim();
+
   @override
   Widget build(BuildContext context) {
     final result = _result;
     final failure = _failure;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('GetPayIn checkout')),
+      appBar: AppBar(
+        title: const Text(
+          'GetPayIn Demo',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+        ),
+      ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
         children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          const Text(
+            'Your order',
+            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'A physical-goods checkout powered by GetPayIn hosted payments.',
+            style: TextStyle(fontSize: 15, color: Color(0xFF6D6E78)),
+          ),
+          const SizedBox(height: 16),
+          _Card(
             children: <Widget>[
-              Expanded(
-                flex: 2,
-                child: TextField(
-                  controller: _amount,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Amount',
-                    border: OutlineInputBorder(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: _Field(
+                      label: 'First name',
+                      controller: _firstName,
+                      enabled: !_busy,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _Field(
+                      label: 'Last name',
+                      controller: _lastName,
+                      enabled: !_busy,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _currency,
-                  textCapitalization: TextCapitalization.characters,
-                  decoration: const InputDecoration(
-                    labelText: 'Currency',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
+              _Field(
+                label: 'Email',
+                controller: _email,
+                enabled: !_busy,
+                keyboard: TextInputType.emailAddress,
+              ),
+              _Field(label: 'Order title', controller: _title, enabled: !_busy),
+              _Field(
+                label: 'Amount',
+                controller: _amount,
+                enabled: !_busy,
+                keyboard: const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (_) => setState(() {}),
+              ),
+              const _Label('Currency'),
+              _Segmented(
+                options: currencies,
+                selected: _currency,
+                enabled: !_busy,
+                onChanged: (chosen) => setState(() => _currency = chosen),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _server,
-            autocorrect: false,
-            keyboardType: TextInputType.url,
-            decoration: const InputDecoration(
-              labelText: 'Payments server',
-              helperText: 'example/tool/dev_server.py, on your machine.',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          SwitchListTile(
-            value: _useSheet,
-            onChanged:
-                _busy ? null : (value) => setState(() => _useSheet = value),
-            title: const Text('Payment sheet'),
-            subtitle: const Text(
-              'Hosted card fields, on a page you serve from the registered origin.',
-            ),
-          ),
-          if (_useSheet)
-            TextField(
-              controller: _fieldsPage,
-              autocorrect: false,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'Fields page URL',
-                helperText:
-                    'doc/paylink-fields.html, on your registered origin.',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          if (_useSheet)
-            SwitchListTile(
-              value: _collectBilling,
-              onChanged: _busy
-                  ? null
-                  : (value) => setState(() => _collectBilling = value),
-              title: const Text('Billing address'),
-              subtitle: const Text(
-                'Ask for the address the card is billed to, which is what AVS checks.',
-              ),
-            ),
-          SwitchListTile(
-            value: _tokenize,
-            onChanged:
-                _busy ? null : (value) => setState(() => _tokenize = value),
-            title: const Text('Keep the card'),
-            subtitle: const Text(
-              'Vault the card while charging it, so it can be charged again later.',
-            ),
-          ),
-          SwitchListTile(
-            value: _googlePayInApp,
-            onChanged: _busy
-                ? null
-                : (value) => setState(() => _googlePayInApp = value),
-            title: const Text('googlePayInApp'),
-            subtitle: const Text(
-              'On Android, draw it in the app\'s own screen. Ignored on iOS.',
-            ),
-          ),
-          Text('This build would open it: $_presentation'),
           const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _busy ? null : _pay,
-            child: Text(_step ?? 'Create a payment and pay it'),
+          _Card(
+            children: <Widget>[
+              _Toggle(
+                title: 'Payment sheet',
+                detail: 'Card fields in the app, on a page you serve from the '
+                    'registered origin. Off: the hosted checkout.',
+                value: _useSheet,
+                enabled: !_busy,
+                onChanged: (value) => setState(() => _useSheet = value),
+              ),
+              if (_useSheet) ...<Widget>[
+                _Toggle(
+                  title: 'Billing address',
+                  detail: 'Ask for the address the card is billed to, which is '
+                      'what the issuer checks.',
+                  value: _collectBilling,
+                  enabled: !_busy,
+                  onChanged: (value) => setState(() => _collectBilling = value),
+                ),
+                _Toggle(
+                  title: 'Keep the card',
+                  detail: 'Vault it while charging it, so it can be charged '
+                      'again later.',
+                  value: _tokenize,
+                  enabled: !_busy,
+                  onChanged: (value) => setState(() => _tokenize = value),
+                ),
+              ],
+              _Toggle(
+                title: "Google Pay in the app's own screen",
+                detail: 'Only after Google approves the app. Off: the browser '
+                    'sheet.',
+                value: _googlePayInApp,
+                enabled: !_busy,
+                onChanged: (value) => setState(() => _googlePayInApp = value),
+              ),
+              Text(
+                'Opens in: $_presentation',
+                style: const TextStyle(fontSize: 14, color: Color(0xFF6D6E78)),
+              ),
+            ],
           ),
-          const SizedBox(height: 24),
-          if (failure != null)
+          const SizedBox(height: 16),
+          _Card(
+            children: <Widget>[
+              _Field(
+                label: 'Payments server',
+                controller: _server,
+                enabled: !_busy,
+                keyboard: TextInputType.url,
+                hint: 'example/tool/dev_server.py, on your machine',
+              ),
+              if (_useSheet)
+                _Field(
+                  label: 'Fields page URL',
+                  controller: _fieldsPage,
+                  enabled: !_busy,
+                  keyboard: TextInputType.url,
+                  hint: 'paylink-fields.html, on your registered origin',
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 56,
+            child: FilledButton(
+              onPressed: _busy ? null : _pay,
+              style: FilledButton.styleFrom(
+                backgroundColor: brand,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: _busy
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      'Pay $_priced',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+            ),
+          ),
+          if (_step != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                _step!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF6D6E78)),
+              ),
+            ),
+          const SizedBox(height: 16),
+          const Text(
+            'Demo only: the hash token lives on the dev server, never in this '
+            'app. In production your own backend signs the request.',
+            style: TextStyle(fontSize: 13, color: Color(0xFF8A8B94)),
+          ),
+          if (failure != null) ...<Widget>[
+            const SizedBox(height: 16),
             _Outcome(title: 'It would not open', lines: <String>[failure]),
-          if (result != null)
+          ],
+          if (result != null) ...<Widget>[
+            const SizedBox(height: 16),
             _Outcome(
               title: result.status.wireName,
               lines: <String>[
@@ -354,9 +459,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   'status ${result.invoiceStatus}',
                 if (result.code != null) 'code ${result.code!.wireName}',
                 if (result.message != null) result.message!,
-                'Only the invoice.paid webhook proves this. Confirm it on your server.',
+                'Only the invoice.paid webhook proves this. Confirm it on '
+                    'your server.',
               ],
             ),
+          ],
         ],
       ),
     );
@@ -377,6 +484,230 @@ class _Payment {
   String get checkoutUrl => data['checkout_url']! as String;
 }
 
+/// A white panel with the demo's own corner and spacing.
+class _Card extends StatelessWidget {
+  const _Card({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+}
+
+/// The small grey word over a field.
+class _Label extends StatelessWidget {
+  const _Label(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: Color(0xFF42434E),
+        ),
+      ),
+    );
+  }
+}
+
+/// One labelled input, drawn the way the demo draws all of them.
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.label,
+    required this.controller,
+    required this.enabled,
+    this.keyboard,
+    this.hint,
+    this.onChanged,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final bool enabled;
+  final TextInputType? keyboard;
+  final String? hint;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _Label(label),
+          TextField(
+            controller: controller,
+            enabled: enabled,
+            autocorrect: false,
+            keyboardType: keyboard,
+            onChanged: onChanged,
+            style: const TextStyle(fontSize: 16),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              enabledBorder: _border(const Color(0xFFDFE3E8)),
+              focusedBorder: _border(brand),
+              disabledBorder: _border(const Color(0xFFEDEFF2)),
+            ),
+          ),
+          if (hint != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                hint!,
+                style: const TextStyle(fontSize: 13, color: Color(0xFF8A8B94)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static OutlineInputBorder _border(Color color) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide(color: color),
+    );
+  }
+}
+
+/// The currency strip: one of a few choices, all of them visible.
+class _Segmented extends StatelessWidget {
+  const _Segmented({
+    required this.options,
+    required this.selected,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final List<String> options;
+  final String selected;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1F5F4),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: <Widget>[
+            for (final option in options)
+              Expanded(
+                child: GestureDetector(
+                  onTap: enabled ? () => onChanged(option) : null,
+                  child: Container(
+                    height: 44,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: option == selected ? brand : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      option,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: option == selected
+                            ? Colors.white
+                            : const Color(0xFF42434E),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One switch, with the sentence that says what it changes.
+class _Toggle extends StatelessWidget {
+  const _Toggle({
+    required this.title,
+    required this.detail,
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String detail;
+  final bool value;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF6D6E78),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Switch(
+            value: value,
+            activeThumbColor: Colors.white,
+            activeTrackColor: brand,
+            onChanged: enabled ? onChanged : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// What came back, as plainly as it can be put.
 class _Outcome extends StatelessWidget {
   const _Outcome({required this.title, required this.lines});
@@ -386,18 +717,22 @@ class _Outcome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            for (final line in lines) Text(line),
-          ],
+    return _Card(
+      children: <Widget>[
+        Text(
+          title,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
         ),
-      ),
+        const SizedBox(height: 8),
+        for (final line in lines)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              line,
+              style: const TextStyle(fontSize: 15, color: Color(0xFF42434E)),
+            ),
+          ),
+      ],
     );
   }
 }

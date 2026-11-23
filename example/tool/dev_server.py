@@ -96,6 +96,9 @@ def create_payment(
     config: dict[str, str],
     hosted_fields: bool = False,
     tokenize: bool = False,
+    first_name: str = "Test",
+    last_name: str = "Payer",
+    email: str = "test.payer@example.com",
 ) -> dict:
     """Creates one payment and hands back the whole of what `/init` answered.
 
@@ -109,9 +112,9 @@ def create_payment(
     """
     payload: "OrderedDict[str, str]" = OrderedDict(
         (
-            ("first_name", "Test"),
-            ("last_name", "Payer"),
-            ("email", "test.payer@example.com"),
+            ("first_name", first_name),
+            ("last_name", last_name),
+            ("email", email),
             ("order_title", title),
             ("order_amount", amount),
             ("currency", currency),
@@ -148,7 +151,15 @@ def create_payment(
 
         if hosted_fields and refusal:
             plain = create_payment(
-                amount, currency, title, config, hosted_fields=False, tokenize=tokenize
+                amount,
+                currency,
+                title,
+                config,
+                hosted_fields=False,
+                tokenize=tokenize,
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
             )
             plain["fields_error"] = refusal
 
@@ -210,6 +221,9 @@ class Handler(BaseHTTPRequestHandler):
                 config=self.config,
                 hosted_fields=bool(asked.get("hosted_fields")),
                 tokenize=bool(asked.get("tokenize")),
+                first_name=str(asked.get("first_name") or "Test"),
+                last_name=str(asked.get("last_name") or "Payer"),
+                email=str(asked.get("email") or "test.payer@example.com"),
             )
         except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
             self._send(502, {"error": str(failure)})
