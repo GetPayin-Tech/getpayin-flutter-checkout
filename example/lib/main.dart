@@ -121,6 +121,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
     text: defaultFieldsPage,
   );
 
+  /// The integration the dev server should sign with, when it is not to use its own.
+  ///
+  /// Held in memory and nowhere else. A hash token written to the phone's storage is a hash
+  /// token on a lost phone, and this one is only here so a tester can point the harness at a
+  /// second account without editing a file on their machine and restarting.
+  final TextEditingController _baseUrl = TextEditingController();
+  final TextEditingController _publicToken = TextEditingController();
+  final TextEditingController _hashToken = TextEditingController();
+
   String _currency = 'EGP';
   bool _googlePayInApp = false;
   bool _useSheet = false;
@@ -139,6 +148,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _email.dispose();
     _title.dispose();
     _amount.dispose();
+    _baseUrl.dispose();
+    _publicToken.dispose();
+    _hashToken.dispose();
     _server.dispose();
     _fieldsPage.dispose();
     super.dispose();
@@ -262,6 +274,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'title': _title.text.trim(),
         'hosted_fields': _useSheet,
         'tokenize': _tokenize,
+        if (_baseUrl.text.trim().isNotEmpty) 'base_url': _baseUrl.text.trim(),
+        if (_publicToken.text.trim().isNotEmpty)
+          'public_token': _publicToken.text.trim(),
+        if (_hashToken.text.trim().isNotEmpty)
+          'hash_token': _hashToken.text.trim(),
       }),
     );
 
@@ -282,6 +299,82 @@ class _CheckoutPageState extends State<CheckoutPage> {
       GetPayInCheckout.presentationFor(googlePayInApp: _googlePayInApp)
           .wireName;
 
+  /// Opens the integration the dev server should sign this payment with.
+  ///
+  /// Left empty, the server uses the credentials on the machine it runs on, which is how it
+  /// has always worked and the only way that keeps the hash token off the phone entirely.
+  Future<void> _openSettings() {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheet) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          20,
+          16,
+          MediaQuery.viewInsetsOf(sheet).bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'Integration',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Sent to the dev server, which signs with these instead of its own. '
+              'Leave a field empty to keep what the server already has.',
+              style: TextStyle(fontSize: 14, color: Color(0xFF6D6E78)),
+            ),
+            const SizedBox(height: 16),
+            _Field(
+              label: 'Base URL',
+              controller: _baseUrl,
+              enabled: true,
+              keyboard: TextInputType.url,
+              hint: 'https://pay.getpayin.com',
+            ),
+            _Field(
+              label: 'Authentication token',
+              controller: _publicToken,
+              enabled: true,
+            ),
+            _Field(
+              label: 'Hash token',
+              controller: _hashToken,
+              enabled: true,
+              obscure: true,
+              hint: 'Held in memory only, never written to the phone',
+            ),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton(
+                onPressed: () => Navigator.of(sheet).pop(),
+                style: FilledButton.styleFrom(
+                  backgroundColor: brand,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text(
+                  'Done',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// What the pay button says, and what the sheet labels its own.
   String get _priced => '${_amount.text.trim()} $_currency'.trim();
 
@@ -297,6 +390,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
           'GetPayIn Demo',
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
         ),
+        actions: <Widget>[
+          IconButton(
+            onPressed: _busy ? null : _openSettings,
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Integration',
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
@@ -560,6 +660,7 @@ class _Field extends StatelessWidget {
     this.keyboard,
     this.hint,
     this.onChanged,
+    this.obscure = false,
   });
 
   final String label;
@@ -568,6 +669,7 @@ class _Field extends StatelessWidget {
   final TextInputType? keyboard;
   final String? hint;
   final ValueChanged<String>? onChanged;
+  final bool obscure;
 
   @override
   Widget build(BuildContext context) {
@@ -581,6 +683,7 @@ class _Field extends StatelessWidget {
             controller: controller,
             enabled: enabled,
             autocorrect: false,
+            obscureText: obscure,
             keyboardType: keyboard,
             onChanged: onChanged,
             style: const TextStyle(fontSize: 16),

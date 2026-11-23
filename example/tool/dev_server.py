@@ -209,6 +209,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - the name the server calls
         self._send(200, {"ok": True, "base_url": self.config["GETPAYIN_BASE_URL"]})
 
+    def _credentials(self, asked: dict) -> dict[str, str]:
+        """This server's own credentials, with anything the app sent taking precedence.
+
+        The harness can be pointed at another integration from the phone, so a tester does
+        not have to edit a file and restart to try a second account. Empty values are
+        ignored rather than honoured: a blank field in the app means "leave it alone", not
+        "sign with nothing".
+        """
+        overrides = {
+            "GETPAYIN_BASE_URL": str(asked.get("base_url") or "").strip(),
+            "GETPAYIN_PUBLIC_TOKEN": str(asked.get("public_token") or "").strip(),
+            "GETPAYIN_HASH_TOKEN": str(asked.get("hash_token") or "").strip(),
+        }
+
+        return self.config | {k: v for k, v in overrides.items() if v}
+
     def do_POST(self) -> None:  # noqa: N802 - the name the server calls
         length = int(self.headers.get("Content-Length") or 0)
         asked = json.loads(self.rfile.read(length) or b"{}")
@@ -218,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
                 amount=str(asked.get("amount", "")).strip(),
                 currency=str(asked.get("currency", "")).strip().upper(),
                 title=str(asked.get("title") or "Example order"),
-                config=self.config,
+                config=self._credentials(asked),
                 hosted_fields=bool(asked.get("hosted_fields")),
                 tokenize=bool(asked.get("tokenize")),
                 first_name=str(asked.get("first_name") or "Test"),
