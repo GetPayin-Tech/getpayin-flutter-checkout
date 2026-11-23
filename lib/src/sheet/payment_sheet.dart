@@ -630,8 +630,15 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     final rows =
         (_config.collectBillingAddress ? 3 : 2) + (_config.keepTheCard ? 1 : 0);
 
-    return _config.style.rowHeight * rows + 2;
+    return _config.style.rowHeight * rows + _boxBorders(rows);
   }
+
+  /// Every hairline the box draws: one between each pair of rows, and its own two edges.
+  ///
+  /// Counted rather than rounded up, because the web view is given this height instead of
+  /// finding one: a pixel short and the box's bottom edge is cropped off, which reads as a
+  /// card form that ran out of room rather than as a box that is one pixel small.
+  double _boxBorders(int rows) => (rows - 1) + 2;
 
   /// Whether there is enough on the card screen to charge.
   ///
