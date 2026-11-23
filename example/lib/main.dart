@@ -79,6 +79,16 @@ class ExampleApp extends StatelessWidget {
 /// GetPayIn's own green, so the harness looks like the product it is testing.
 const Color brand = Color(0xFF009C95);
 
+/// The sheet, in the same green.
+///
+/// The package ships a Stripe-ish blue, which is a sensible default for a package and the
+/// wrong colour for this app: the hosted checkout already draws itself in the company's own
+/// colour, so a sheet left on the default is the one surface in the flow that looks borrowed.
+const PaymentSheetStyle sheetStyle = PaymentSheetStyle(
+  accent: brand,
+  selectedBorder: brand,
+);
+
 /// What the page is drawn on, behind the cards.
 const Color canvas = Color(0xFFF1F5F4);
 
@@ -176,6 +186,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         session: session,
         fieldsPageUrl: _fieldsPage.text.trim(),
         fieldsPageHeaders: fieldsPageHeaders,
+        style: sheetStyle,
         collectBillingAddress: _collectBilling,
         keepTheCard: _tokenize,
         returnUrl: returnUrl,
