@@ -93,12 +93,14 @@ class PaymentSheetConfiguration {
   ///
   /// The handover is the right thing to do and the payer is served by it, but it used to be
   /// silent: an integrator saw a browser open with nothing to say why, and the reason is the
-  /// only part they can act on. [FieldsFailure] names it — a page on the wrong origin, a
-  /// company without the fields, a session that has expired.
+  /// only part they can act on. [FieldsError.failure] names it — a page on the wrong origin,
+  /// a company without the fields, a session that has expired — and [FieldsError.message]
+  /// says it in words, which is the only thing there is to go on when the code is one this
+  /// package does not know.
   ///
   /// Never called for a decline or a mistyped card: those stay on the sheet for the payer to
   /// correct, and are not a handover.
-  final void Function(FieldsFailure failure)? onHandover;
+  final void Function(FieldsError error)? onHandover;
 
   /// How long the sheet says the payment went through before it closes.
   ///
@@ -166,9 +168,9 @@ class GetPayInPaymentSheet extends StatefulWidget {
   /// Opens the hosted checkout, having told the integrator why the sheet could not.
   static Future<CheckoutResult> _handOver(
     PaymentSheetConfiguration configuration,
-    FieldsFailure failure,
+    FieldsError error,
   ) {
-    configuration.onHandover?.call(failure);
+    configuration.onHandover?.call(error);
 
     return GetPayInCheckout.open(
       configuration.session.checkoutUrl,
@@ -194,7 +196,7 @@ class GetPayInPaymentSheet extends StatefulWidget {
 
     return switch (outcome) {
       _Settled(:final result) => result,
-      _Fallback(:final failure) => _handOver(configuration, failure),
+      _Fallback(:final error) => _handOver(configuration, error),
       null => cancelledResult(closedByPayerMessage),
     };
   }
@@ -215,10 +217,10 @@ class _Settled extends _SheetOutcome {
 }
 
 class _Fallback extends _SheetOutcome {
-  const _Fallback(this.failure);
+  const _Fallback(this.error);
 
   /// What the fields could not do, for an integrator who has to fix it.
-  final FieldsFailure failure;
+  final FieldsError error;
 }
 
 enum _Screen { methods, selectCard, newCard, done }
@@ -300,7 +302,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       return;
     }
 
-    _close(_Fallback(error.failure));
+    _close(_Fallback(error));
   }
 
   void _settle(CheckoutResult result) {

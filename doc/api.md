@@ -182,6 +182,7 @@ See [The payment sheet](payment-sheet.md), which covers what it needs before it 
 | `collectBillingAddress`    | `bool`                                            | `false`    | Ask the payer for the address the card is billed to, and the name it is in.                |
 | `keepTheCard`              | `bool`                                            | `false`    | Ask the payer to keep the card for next time. PayLink's SDK draws the agreement.           |
 | `successPause`             | `Duration`                                        | `1200ms`   | How long the sheet says the payment went through before it closes.                         |
+| `onHandover`               | `void Function(FieldsError)?`                     | `null`     | Called with the reason when the sheet gives up and opens the hosted checkout.              |
 | `billingCountries`         | `List<BillingCountry>`                            | all        | The countries the billing form offers. Narrow it, or translate it.                         |
 | `billingCountry`           | `String`                                          | `'EG'`     | The country that form starts on, as an ISO 3166-1 alpha-2 code.                            |
 | `expectedInvoiceId`        | `Object?`                                         | `null`     | The invoice this payment is for, so a charge booked against another is refused.            |

@@ -48,7 +48,7 @@ void main() {
     Future<CheckoutResult> Function(SavedCard card)? chargeSavedCard,
     bool fallBackToHostedCheckout = true,
     bool collectBillingAddress = false,
-    void Function(FieldsFailure failure)? onHandover,
+    void Function(FieldsError error)? onHandover,
     Duration successPause = Duration.zero,
     String origin = testOrigin,
   }) {
@@ -646,7 +646,7 @@ void main() {
    */
   group('handing over to the hosted checkout', () {
     testWidgets('says why before it does', (tester) async {
-      final reasons = <FieldsFailure>[];
+      final reasons = <FieldsError>[];
 
       // The hosted checkout it hands to is not what is under test, and whether it opens
       // depends on a session guard other tests share.
@@ -666,12 +666,18 @@ void main() {
       await pumpFrames(tester);
       await pumpFrames(tester);
 
-      expect(reasons, <FieldsFailure>[FieldsFailure.originNotAllowed]);
+      expect(reasons.single.failure, FieldsFailure.originNotAllowed);
+      expect(
+        reasons.single.message,
+        'The card fields page is not served from the registered origin.',
+        reason:
+            'an unmapped code is useless without the words that came with it',
+      );
     });
 
     testWidgets('says nothing for a decline the payer can retry',
         (tester) async {
-      final reasons = <FieldsFailure>[];
+      final reasons = <FieldsError>[];
 
       (await openSheet(
         tester,

@@ -189,6 +189,24 @@ class _CheckoutPageState extends State<CheckoutPage> {
     super.dispose();
   }
 
+  /// Where a throw came from, as one line a tester can paste.
+  ///
+  /// A crash reported as "Null check operator used on a null value" and nothing else is a
+  /// crash nobody can place, so the frame it came from goes in the trace beside it.
+  String _firstFrameOf(StackTrace stack) {
+    final frames = stack.toString().split('\n');
+
+    for (final frame in frames) {
+      final line = frame.trim();
+
+      if (line.isNotEmpty && !line.contains('<asynchronous')) {
+        return line;
+      }
+    }
+
+    return 'unknown frame';
+  }
+
   /// Keeps the trace, so the question "what did it do last time" survives the app closing.
   void _rememberTrace() => _store.put('trace', List<String>.from(_trace));
 
@@ -241,8 +259,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     } on GetPayInCheckoutError catch (error) {
       _say('threw: ${error.runtimeType} ${error.message}');
       setState(() => _failure = error.message);
-    } catch (error) {
+    } catch (error, stack) {
       _say('threw: $error');
+      _say('at: ${_firstFrameOf(stack)}');
       setState(() => _failure = '$error');
     } finally {
       _rememberTrace();
@@ -266,10 +285,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageHeaders: fieldsPageHeaders,
         style: sheetStyle,
         collectBillingAddress: _collectBilling,
-        onHandover: (failure) {
-          _say('handover: ${failure.name}');
+        onHandover: (error) {
+          _say('handover: ${error.failure.name}  ${error.message ?? ''}');
           setState(
-            () => _note = 'The sheet handed over: ${failure.name}. '
+            () => _note = 'The sheet handed over: ${error.failure.name}. '
+                '${error.message ?? ''} '
                 'The payment was taken on the hosted checkout.',
           );
         },
