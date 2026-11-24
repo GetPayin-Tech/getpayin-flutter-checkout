@@ -70,6 +70,17 @@ The next payment then offers that card on the sheet. Picking it calls `/charge` 
 signs `tokens/charge` with the hash token and answers. The payer types nothing and the app
 never sees the token, which is the whole point of a vaulted card.
 
+The charge asks the issuer to authenticate the payer, which takes three calls rather than
+one: `tokens/authentication/setup`, then `tokens/charge` carrying an
+`authentication_return_url`, then `tokens/authentication/complete` once the payer has
+answered. Without those fields the issuer is never asked and the charge simply goes through
+on the strength of the card having been authenticated when it was vaulted -- which is the
+documented default, not a fault.
+
+The challenge runs over the tunnel rather than this server's LAN address. A bank's page is
+HTTPS and posts its answer back to the return URL, and no browser will carry that answer
+down to plain HTTP.
+
 This server also serves the fields page at `/paylink-fields.html`, pointed at whichever
 PayLink it is configured for, so one tunnel covers the page, the webhook and the charge:
 

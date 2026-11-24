@@ -246,6 +246,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'amount': _amount.text.trim(),
         'currency': _currency,
         'title': _title.text.trim(),
+        // Where the issuer can send the payer back to. Its own host, not this server's LAN
+        // address: a bank's page is HTTPS and a browser will not carry its answer down to
+        // plain HTTP.
+        'public_base': _publicBase,
         if (_baseUrl.text.trim().isNotEmpty) 'base_url': _baseUrl.text.trim(),
         if (_publicToken.text.trim().isNotEmpty)
           'public_token': _publicToken.text.trim(),
@@ -258,6 +262,19 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
     _say('charge answered ${answer.statusCode}: '
         '${body['message'] ?? body['error'] ?? body['success']}');
+
+    if (body['challenge_url'] case final String challenge) {
+      _say('issuer wants the payer: $challenge');
+
+      return GetPayInCheckout.open(
+        challenge,
+        OpenCheckoutOptions(
+          returnUrl: returnUrl,
+          expectedInvoiceId: body['invoice_id'],
+          title: _title.text.trim(),
+        ),
+      );
+    }
 
     if (answer.statusCode >= 300) {
       return CheckoutResult(
@@ -641,6 +658,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
         const SnackBar(content: Text('Copied')),
       );
     }
+  }
+
+  /// The host the issuer can reach, taken from the page the fields are served on.
+  ///
+  /// That page already has to be on the origin registered for the integration, which is
+  /// public and HTTPS -- the two things a bank's return needs and a LAN address is not.
+  String get _publicBase {
+    final page = Uri.tryParse(_fieldsPage.text.trim());
+
+    if (page == null || !page.isScheme('https')) {
+      return '';
+    }
+
+    return page.origin;
   }
 
   /// What the pay button says, and what the sheet labels its own.

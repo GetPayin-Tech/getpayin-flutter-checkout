@@ -25,7 +25,9 @@ import os
 import socket
 import ssl
 import sys
+import secrets
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -213,22 +215,14 @@ def remember_card(card: dict) -> None:
     CARDS.chmod(0o600)
 
 
-def charge_card(asked: dict, config: dict[str, str]) -> dict:
-    """Charges a vaulted card, which only a server may do.
+def call_tokens(path: str, payload: "OrderedDict[str, str]", config: dict[str, str]) -> tuple[int, dict]:
+    """Signs a tokens/* call and makes it, handing back the status with the body.
 
     The signature covers every field except itself and the public token, in the order they
-    are sent -- so the order below is part of the contract, not a style choice.
+    are sent -- so the order each caller builds is part of the contract, not a style choice.
+    A 202 is an answer rather than a failure: the charge is alive and waiting on the payer,
+    so the status comes back instead of an exception.
     """
-    payload: "OrderedDict[str, str]" = OrderedDict(
-        (
-            ("card_token", str(asked.get("card_token", "")).strip()),
-            ("initiator", "customer"),
-            ("currency", str(asked.get("currency", "")).strip().upper()),
-            ("price", str(asked.get("amount", "")).strip()),
-            ("product", str(asked.get("title") or "Example order")),
-        )
-    )
-
     signed = "".join(str(value) for value in payload.values())
     digest = hmac.new(
         config["GETPAYIN_HASH_TOKEN"].encode(), signed.encode(), hashlib.sha256
@@ -237,7 +231,7 @@ def charge_card(asked: dict, config: dict[str, str]) -> dict:
     payload["token"] = config["GETPAYIN_PUBLIC_TOKEN"]
     payload["signature"] = base64.b64encode(digest).decode()
 
-    url = config["GETPAYIN_BASE_URL"].rstrip("/") + "/api/v2/integration/tokens/charge"
+    url = config["GETPAYIN_BASE_URL"].rstrip("/") + "/api/v2/integration/" + path
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
@@ -251,9 +245,142 @@ def charge_card(asked: dict, config: dict[str, str]) -> dict:
 
     try:
         with urllib.request.urlopen(request, timeout=30, context=ssl.create_default_context()) as answer:
-            return json.loads(answer.read().decode())
+            return answer.status, json.loads(answer.read().decode())
     except urllib.error.HTTPError as failure:
-        raise RuntimeError(f"{failure.code} from {url}: {failure.read().decode()[:400]}") from failure
+        body = failure.read().decode()
+
+        try:
+            return failure.code, json.loads(body)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"{failure.code} from {url}: {body[:400]}") from failure
+
+
+# Charges paused mid-flight, waiting on the payer to answer their bank. Held in memory
+# only: a challenge that outlives this process is one nobody is still looking at.
+PENDING: dict[str, dict] = {}
+
+
+def charge_card(asked: dict, config: dict[str, str]) -> dict:
+    """Charges a vaulted card, asking the issuer to authenticate the payer first.
+
+    Three calls rather than one, because a charge sent without an authentication return URL
+    is never challenged: the issuer is not asked, and the payment goes through on the
+    strength of the card having been authenticated once, when it was vaulted. Sending them
+    lets the issuer stop the charge at 202 and ask for a passcode.
+
+    The challenge is run over [public_base] rather than this server's LAN address: the
+    issuer's page is HTTPS and posts its answer back to the return URL, and a browser will
+    not carry that answer down to plain HTTP.
+    """
+    card_token = str(asked.get("card_token", "")).strip()
+    public_base = str(asked.get("public_base", "")).strip().rstrip("/")
+    reference = secrets.token_hex(8)
+
+    setup_status, setup = call_tokens(
+        "tokens/authentication/setup",
+        OrderedDict((("card_token", card_token), ("reference_number", reference))),
+        config,
+    )
+
+    charge: "OrderedDict[str, str]" = OrderedDict(
+        (
+            ("card_token", card_token),
+            ("initiator", "customer"),
+            ("currency", str(asked.get("currency", "")).strip().upper()),
+            ("price", str(asked.get("amount", "")).strip()),
+            ("product", str(asked.get("title") or "Example order")),
+        )
+    )
+
+    # Both or neither: PayLink requires each with the other, and without them the issuer is
+    # never asked. Skipped when there is nowhere public to send the payer back to.
+    authenticating = bool(public_base) and setup_status < 300 and setup.get("success")
+
+    if authenticating:
+        charge["authentication_return_url"] = f"{public_base}/3ds/{reference}/return"
+        charge["authentication_reference_id"] = setup["data"]["reference_id"]
+
+    status, answer = call_tokens("tokens/charge", charge, config)
+
+    if status != 202:
+        return answer | {"authenticated": authenticating}
+
+    data = answer.get("data", {})
+
+    PENDING[reference] = {
+        "card_token": data.get("card_token") or card_token,
+        "invoice_id": data.get("invoice_id"),
+        "step_up_url": data.get("step_up_url"),
+        "access_token": data.get("access_token"),
+        "authentication_transaction_id": data.get("authentication_transaction_id"),
+        "config": config,
+    }
+
+    return {
+        "success": False,
+        "status": "requires_authentication",
+        "challenge_url": f"{public_base}/3ds/{reference}",
+        "invoice_id": data.get("invoice_id"),
+    }
+
+
+def step_up_page(pending: dict) -> str:
+    """The page that puts the issuer's passcode form in front of the payer.
+
+    The issuer will only render it for a form POST carrying the access token, so the page
+    exists to make that POST. It posts to the top level rather than into a frame: the answer
+    comes back as a navigation to the return URL, which is what finishes the charge.
+    """
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your bank</title>
+<style>
+  body {{ margin:0; font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         color:#30313d; display:flex; align-items:center; justify-content:center; height:100vh; }}
+</style></head>
+<body>
+  <p>Contacting your bank&hellip;</p>
+  <form id="stepUp" method="post" action="{pending['step_up_url']}">
+    <input type="hidden" name="JWT" value="{pending['access_token']}">
+  </form>
+  <script>document.getElementById('stepUp').submit();</script>
+</body></html>"""
+
+
+def finish_authentication(reference: str) -> str:
+    """Completes a challenged charge and hands the app its answer as a return link.
+
+    The link is the one the hosted checkout sends an app back on, so the package reads it
+    with the rules it already has. It is this server asserting the outcome, not PayLink --
+    which is why the app treats a result as a report and the webhook as the proof.
+    """
+    pending = PENDING.pop(reference, None)
+
+    if pending is None:
+        return "myapp://payment-return?success=0&message=That+challenge+has+already+been+answered"
+
+    status, answer = call_tokens(
+        "tokens/authentication/complete",
+        OrderedDict(
+            (
+                ("card_token", pending["card_token"]),
+                ("invoice_id", str(pending["invoice_id"])),
+                ("authentication_transaction_id", pending["authentication_transaction_id"]),
+            )
+        ),
+        pending["config"],
+    )
+
+    paid = status < 300 and answer.get("success")
+    fields = {
+        "success": "1" if paid else "0",
+        "invoice_id": str(pending["invoice_id"]),
+        "invoice_status": "PAID" if paid else "UNPAID",
+        "message": str(answer.get("message") or ("Charged the saved card." if paid else "The bank did not approve it.")),
+    }
+
+    return "myapp://payment-return?" + urllib.parse.urlencode(fields)
 
 
 def refused_code(detail: str) -> str | None:
@@ -280,7 +407,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _send_html(self, html: str, status: int = 200) -> None:
+        encoded = html.encode()
+
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _send_to_app(self, link: str) -> None:
+        """Sends the payer's browser back to the app on a return link."""
+        self.send_response(303)
+        self.send_header("Location", link)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802 - the name the server calls
+        if self.path.startswith("/3ds/"):
+            self._three_d_secure()
+
+            return
+
         if self.path.startswith("/paylink-fields.html"):
             self._send_page()
 
@@ -292,6 +440,29 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send(200, {"ok": True, "base_url": self.config["GETPAYIN_BASE_URL"]})
+
+    def _three_d_secure(self) -> None:
+        """The two halves of a challenge: the page that raises it, and the answer coming back.
+
+        Both arrive on the payer's browser rather than from the app, which is why they are
+        GET routes on whatever host the challenge was started on.
+        """
+        parts = self.path.split("?")[0].strip("/").split("/")
+        reference = parts[1] if len(parts) > 1 else ""
+
+        if parts[-1] == "return":
+            self._send_to_app(finish_authentication(reference))
+
+            return
+
+        pending = PENDING.get(reference)
+
+        if pending is None:
+            self._send_html("<p>That challenge is no longer waiting.</p>", 404)
+
+            return
+
+        self._send_html(step_up_page(pending))
 
     def _send_page(self) -> None:
         """Serves the card fields page, pointed at whichever PayLink this server uses.
@@ -365,10 +536,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - the name the server calls
         length = int(self.headers.get("Content-Length") or 0)
-        asked = json.loads(self.rfile.read(length) or b"{}")
+        raw = self.rfile.read(length)
+
+        try:
+            asked = json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            asked = {}
 
         if self.path.startswith("/charge"):
             self._charge(asked)
+
+            return
+
+        # The issuer posts its answer rather than following a link, so the return URL has to
+        # take a POST as readily as a GET.
+        if self.path.startswith("/3ds/"):
+            self._send_to_app(
+                finish_authentication(self.path.split("?")[0].strip("/").split("/")[1])
+            )
 
             return
 
