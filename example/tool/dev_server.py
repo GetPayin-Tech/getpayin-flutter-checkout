@@ -8,7 +8,7 @@ server that does it, so the phone only ever receives a `checkout_url`.
 It is for testing, not for production. Run it on your machine, point the example app at it,
 and keep the credentials in `~/.config/getpayin/dev.env`:
 
-    GETPAYIN_BASE_URL=https://devpay.getpayin.com
+    GETPAYIN_BASE_URL=https://pay.getpayin.com
     GETPAYIN_PUBLIC_TOKEN=...
     GETPAYIN_HASH_TOKEN=...
 
@@ -188,8 +188,8 @@ FALLS_BACK_TO_CHECKOUT = {
     "fields_unavailable",
     "fields_unsupported",
     "origin_missing",
-    # Until PAYL-2089 is deployed, keeping a card on hosted fields is refused outright.
-    # After it, the refusal only arrives when the consent wording was left out.
+    # A PayLink that cannot keep a card from hosted fields refuses it outright. One that
+    # can refuses it only when the consent wording was left out.
     "tokenize_unavailable_on_fields",
     "tokenize_consent_required",
 }
