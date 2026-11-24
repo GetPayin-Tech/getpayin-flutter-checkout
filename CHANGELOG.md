@@ -4,6 +4,42 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the package follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `CheckoutResultCode.outcomeUnknown`, for a charge that went out and whose answer never
+  came back — the network went, the page died, your own server threw after it had called.
+  The one result that is neither a payment nor a refusal: read the invoice, and never take
+  payment again on it.
+- `PaymentSheetStrings.outcomeUnknown`, which is what the payer is told in that case. Never
+  "try another card": the card may already have been charged.
+
+### Fixed
+
+Five faults in the payment sheet, each found by a review and each fixed after the test that
+proves it was there. All five end the same way: a payer invited to pay a second time for a
+card that may already have been charged.
+
+- A sheet closed mid-charge reported `cancelled`, which the docs said to do nothing about,
+  while PayLink went on and took the payment it already had. A swipe, a tap above the sheet
+  and Android Back are all refused now from the moment a charge or an issuer challenge is
+  out, and allowed again as soon as one is not.
+- An error the page could not name, arriving after the charge had gone out, was read as
+  "the card fields cannot run here": the payer was handed to the hosted checkout and could
+  pay a second time. Nothing falls back once a charge is out; the sheet settles not paid
+  with `outcomeUnknown` instead.
+- The sheet never held the one-checkout-at-a-time guard, so a double tap opened two of them
+  and `GetPayInCheckout.busy` stayed false, although the docs tell integrators to guard the
+  pay button with it. It is held for as long as the sheet is open, and released before the
+  hosted fallback opens a checkout of its own.
+- A payer whose wallet payment was declined could try again, and the second answer went
+  nowhere: the surface had already finished with its return link and would not report
+  another. It is rebuilt after a decline, so the next attempt is read like the first.
+- An exception from `chargeSavedCard` offered the payer another card, although a timeout
+  from a server that had already charged the card is one of those exceptions. The sheet
+  settles with `outcomeUnknown` instead of inviting a second payment.
+
 ## 0.1.0
 
 First release: the Flutter port of

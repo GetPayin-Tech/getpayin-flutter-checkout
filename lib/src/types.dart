@@ -39,6 +39,16 @@ enum CheckoutResultCode {
   /// The link reported an invoice state that is not paid in full.
   unexpectedInvoiceStatus('unexpected_invoice_status'),
 
+  /// A charge started and its answer never arrived, so nobody knows how it ended.
+  ///
+  /// The one result that is neither a payment nor a refusal. The gateway had the charge
+  /// before the answer was lost — the network went, the page died, the payer closed the
+  /// sheet mid-charge — so the card may well have been charged.
+  ///
+  /// Do not take payment again on this code. Read the invoice on your server, and wait for
+  /// the `invoice.paid` webhook, which arrives whether or not the app was still listening.
+  outcomeUnknown('outcome_unknown'),
+
   /// The checkout could not be shown at all, so the payer never got to pay.
   ///
   /// Only the payment sheet reports this, and only with its fallback to the hosted

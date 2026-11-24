@@ -246,6 +246,13 @@ declined, so do not show the payer a decline.
 Everything else — a declined card, a failed or abandoned 3-D Secure, a bad expiry — keeps the
 sheet open with the reason, and the payer can try again on the same form.
 
+Once a charge is out, nothing falls back and nothing closes behind the payer: a swipe, a tap
+above the sheet and Android Back are all refused until the charge or the issuer's challenge
+has answered. If the answer never arrives — the page died, the network went, your own
+`chargeSavedCard` threw after the call had left — the sheet settles with
+`CheckoutResultCode.outcomeUnknown`. That is not a decline and not a cancellation: read the
+invoice on your server, and never take payment for the order again on it.
+
 ## Styling it
 
 `PaymentSheetStyle` is handed to both sides: Flutter draws the sheet with it, and the page

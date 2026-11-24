@@ -8,8 +8,6 @@ import 'sessions/browser_session.dart';
 import 'sessions/registry.dart';
 import 'types.dart';
 
-final SessionGuard _guard = SessionGuard();
-
 /// Hands the request to the mounted provider.
 Future<CheckoutResult> _runInAppCheckout(CheckoutRequest request) {
   final presenter = getPresenter();
@@ -57,7 +55,7 @@ abstract final class GetPayInCheckout {
       override: options.presentation,
     );
 
-    return _guard.run(
+    return checkoutGuard.run(
       () => presentation == CheckoutPresentation.inApp
           ? _runInAppCheckout(request)
           : runBrowserCheckout(request),
@@ -112,8 +110,10 @@ abstract final class GetPayInCheckout {
     );
   }
 
-  /// True while a checkout is open.
+  /// True while a checkout is open, the payment sheet included.
   ///
-  /// Guard your Pay button with it to avoid [GetPayInSessionBusyError] on a double tap.
-  static bool get busy => _guard.busy;
+  /// One guard covers both, because a second checkout opened over a live one would stack a
+  /// web view under a dead one. Guard your Pay button with it to avoid
+  /// [GetPayInSessionBusyError] on a double tap.
+  static bool get busy => checkoutGuard.busy;
 }

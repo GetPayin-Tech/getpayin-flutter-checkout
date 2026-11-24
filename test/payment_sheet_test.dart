@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/core/session_guard.dart';
 import 'package:getpayin_checkout/src/sessions/deep_link.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -22,6 +23,7 @@ void main() {
   late FakeDeepLinks links;
 
   setUp(() {
+    checkoutGuard = SessionGuard();
     webView = FakeWebViewPlatform.install();
     launcher = FakeUrlLauncher.install();
     links = FakeDeepLinks();
@@ -96,7 +98,10 @@ void main() {
   FakeWebViewController cardBox() => webView.controllers.first;
 
   /// The controller behind the wallet button, which loads a URL carrying a fragment.
-  FakeWebViewController walletSurface() => webView.controllers.firstWhere(
+  ///
+  /// The newest one: the sheet replaces the surface after a decline, and the fake keeps
+  /// every controller it ever built, so the oldest match is the one that already answered.
+  FakeWebViewController walletSurface() => webView.controllers.lastWhere(
         (controller) =>
             (controller.loaded.lastOrNull?.fragment ?? '').isNotEmpty,
       );
@@ -694,6 +699,179 @@ void main() {
       await pumpFrames(tester);
 
       expect(reasons, isEmpty);
+    });
+  });
+
+  /*
+   * A charge that started and then lost its answer is the one outcome nobody knows. The
+   * sheet used to report every one of them as a payment that did not happen -- the payer
+   * sent to the hosted checkout to pay again, or told `checkoutUnavailable`, which the docs
+   * define as nothing having been charged. Both invite a second charge for a card that may
+   * already have been charged once.
+   */
+  group('a charge whose answer never came', () {
+    Future<Future<CheckoutResult>> startCharging(
+      WidgetTester tester, {
+      bool fallBack = true,
+    }) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: fallBack),
+        withProvider: true,
+      );
+
+      postToCard(<String, Object?>{'type': 'charging'});
+      await pumpFrames(tester);
+
+      return pending;
+    }
+
+    testWidgets('is not reported as a checkout that never ran', (tester) async {
+      final pending = await startCharging(tester, fallBack: false);
+
+      postToCard(<String, Object?>{
+        'type': 'error',
+        'code': 'a_code_this_package_does_not_know',
+        'message': 'The answer was lost.',
+      });
+      await pumpFrames(tester);
+
+      final result = await pending;
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('never sends the payer to pay a second time', (tester) async {
+      final pending = await startCharging(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'error',
+        'code': 'session_invalid',
+        'message': 'The answer was lost.',
+      });
+      await pumpFrames(tester);
+
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+      expect(
+        launcher.launches,
+        isEmpty,
+        reason:
+            'the hosted checkout would charge a card that may already be charged',
+      );
+    });
+
+    testWidgets('cannot be dismissed out from under the payer', (tester) async {
+      final pending = await startCharging(tester, fallBack: false);
+
+      await tester.tapAt(const Offset(10, 10));
+      await pumpFrames(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'payment',
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).status,
+        CheckoutStatus.paid,
+        reason: 'the charge was with the gateway when the barrier was tapped',
+      );
+    });
+
+    testWidgets('still closes on a tap outside before anything is charged',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await tester.tapAt(const Offset(10, 10));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.cancelled);
+    });
+
+    testWidgets('holds the one-checkout-at-a-time guard while it is open',
+        (tester) async {
+      expect(GetPayInCheckout.busy, isFalse);
+
+      final pending = await openSheet(tester, configuration());
+
+      expect(
+        GetPayInCheckout.busy,
+        isTrue,
+        reason: 'taking-payments.md tells integrators to gate Pay on this',
+      );
+
+      await tester.tapAt(const Offset(10, 10));
+      await pumpFrames(tester);
+      await pending;
+
+      expect(GetPayInCheckout.busy, isFalse);
+    });
+
+    testWidgets('does not invite a second card when your server threw',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(
+          savedCards: <SavedCard>[
+            const SavedCard(id: 'pm_1', last4: '4242'),
+          ],
+          chargeSavedCard: (_) async => throw StateError('the network went'),
+        ),
+      );
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      final result = await pending;
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(
+        result.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'a timeout can follow a card your server already charged',
+      );
+      expect(
+        find.text(const PaymentSheetStrings().cardDeclined),
+        findsNothing,
+      );
+    });
+
+    testWidgets('lets the payer try the wallet again after a decline',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      await openSheet(tester, configuration());
+
+      final first = walletSurface();
+
+      await first.navigation!.onNavigationRequest!(
+        NavigationRequest(
+          url: returnLink('success=0&invoice_id=90210&message=Declined'),
+          isMainFrame: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        walletSurface(),
+        isNot(same(first)),
+        reason: 'the old surface has latched and would swallow the next answer',
+      );
+    });
+
+    testWidgets('still falls back when the charge had not started',
+        (tester) async {
+      await openSheet(tester, configuration(), withProvider: true);
+
+      postToCard(<String, Object?>{'type': 'error', 'code': 'session_invalid'});
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(launcher.launches.single.$1, testCheckoutUrl);
     });
   });
 }

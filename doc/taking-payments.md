@@ -77,9 +77,11 @@ none. It is the stable value to branch on and to look a message of your own up b
 | `CheckoutResultCode.unreadableReturnLink`     | The link's own fields could not be read.                | Check the invoice on your server. Alert on this one; it is a bug.    |
 | `CheckoutResultCode.wrongInvoice`             | The link named another invoice.                         | Check the invoice on your server. Do not retry blindly.              |
 | `CheckoutResultCode.unexpectedInvoiceStatus`  | `success=1` with an `invoice_status` other than `PAID`. | Check the invoice on your server. An authorised invoice is not paid. |
+| `CheckoutResultCode.outcomeUnknown`           | A charge went out and its answer never came back.       | Check the invoice on your server. Never charge again on this one.    |
+| `CheckoutResultCode.checkoutUnavailable`      | The payment sheet could not be shown at all.            | Nothing was charged. Open the hosted checkout, or show `message`.    |
 
-The payer may well have paid in all three of those, so none of them is a reason to ask for
-payment again before the invoice has been checked on your server.
+The payer may well have paid on every one of those but the last, so none of them is a
+reason to ask for payment again before the invoice has been checked on your server.
 
 ## Confirming it
 

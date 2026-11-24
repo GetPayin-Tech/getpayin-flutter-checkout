@@ -17,6 +17,8 @@ class PaymentSheetStrings {
     this.billingAddress = 'Billing address',
     this.paymentComplete = 'Payment complete',
     this.processing = 'Processing your payment',
+    this.outcomeUnknown =
+        'We could not confirm this payment. Check with your bank before paying again.',
     this.country = 'Country or region',
     this.addressLine = 'Address',
     this.city = 'City',
@@ -77,6 +79,12 @@ class PaymentSheetStrings {
 
   /// What it says while the charge is running and there is nothing to answer.
   final String processing;
+
+  /// What a payer is told when a charge started and its answer never arrived.
+  ///
+  /// Never "try another card": the card may already have been charged, and asking again is
+  /// how one payment becomes two.
+  final String outcomeUnknown;
 
   /// The label on the country list.
   final String country;

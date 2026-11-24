@@ -23,6 +23,7 @@ class CardFieldsSnapshot {
     this.currency,
     this.errorMessage,
     this.cardholderName,
+    this.chargeStarted = false,
     this.valid = const <String>{},
   });
 
@@ -43,6 +44,14 @@ class CardFieldsSnapshot {
 
   /// The last thing worth showing the payer about the card they entered.
   final String? errorMessage;
+
+  /// True once the gateway has been handed this attempt's charge.
+  ///
+  /// Sticky, unlike [charging], which an answer of any kind clears. What the sheet needs to
+  /// know when something goes wrong is not whether a charge is running now but whether one
+  /// ever left: after it did, no failure can honestly be reported as nothing having been
+  /// charged. Cleared only when the payer starts another attempt.
+  final bool chargeStarted;
 
   /// The name the payer typed on the card, which the charge is billed to.
   ///
@@ -74,6 +83,7 @@ class CardFieldsSnapshot {
     int? amountMinor,
     String? currency,
     String? cardholderName,
+    bool? chargeStarted,
     Set<String>? valid,
   }) {
     return CardFieldsSnapshot(
@@ -84,6 +94,7 @@ class CardFieldsSnapshot {
       currency: currency ?? this.currency,
       errorMessage: errorMessage,
       cardholderName: cardholderName ?? this.cardholderName,
+      chargeStarted: chargeStarted ?? this.chargeStarted,
       valid: valid ?? this.valid,
     );
   }
@@ -98,6 +109,7 @@ class CardFieldsSnapshot {
       currency: currency,
       errorMessage: message,
       cardholderName: cardholderName,
+      chargeStarted: chargeStarted,
       valid: valid,
     );
   }
@@ -129,8 +141,9 @@ CardFieldsSnapshot applyFieldsEvent(
     FieldsAuthenticating(:final isChallenge) => snapshot.copyWith(
         authenticating: isChallenge,
         charging: true,
+        chargeStarted: true,
       ),
-    FieldsCharging() => snapshot.copyWith(charging: true),
+    FieldsCharging() => snapshot.copyWith(charging: true, chargeStarted: true),
     FieldsPayment() =>
       snapshot.copyWith(charging: false, authenticating: false),
     FieldsError(:final message) => snapshot

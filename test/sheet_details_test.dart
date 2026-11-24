@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/core/session_guard.dart';
 import 'package:getpayin_checkout/src/sessions/deep_link.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -22,6 +23,7 @@ void main() {
   late FakeDeepLinks links;
 
   setUp(() {
+    checkoutGuard = SessionGuard();
     webView = FakeWebViewPlatform.install();
     launcher = FakeUrlLauncher.install();
     links = FakeDeepLinks();
@@ -346,9 +348,9 @@ void main() {
     });
 
     testWidgets(
-        'lets the payer try again when your server throws while charging a '
-        'saved card', (tester) async {
-      await open(
+        'closes rather than spinning for ever when your server throws while '
+        'charging a saved card', (tester) async {
+      final settled = await open(
         tester,
         configuration(
           savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
@@ -361,9 +363,8 @@ void main() {
       await pumpFrames(tester);
 
       expect(tester.takeException(), isNull);
-      expect(
-          find.text(const PaymentSheetStrings().cardDeclined), findsOneWidget);
-      expect(find.text(r'Pay $97.42'), findsOneWidget);
+      expect(find.text(r'Pay $97.42'), findsNothing);
+      expect((await settled).code, CheckoutResultCode.outcomeUnknown);
     });
 
     testWidgets(

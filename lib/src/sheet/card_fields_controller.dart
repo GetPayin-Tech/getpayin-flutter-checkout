@@ -108,6 +108,9 @@ class CardFieldsController extends ChangeNotifier {
   /// True once the charge is running and can no longer be called off.
   bool get isCharging => _snapshot.charging;
 
+  /// True once the gateway has this attempt's charge, whatever it answered since.
+  bool get chargeStarted => _snapshot.chargeStarted;
+
   /// What will actually be charged, in minor units, once the gateway has said.
   int? get amountMinor => _snapshot.amountMinor;
 
@@ -134,7 +137,11 @@ class CardFieldsController extends ChangeNotifier {
       return;
     }
 
-    _apply(_snapshot.copyWith(charging: true).withMessage(null));
+    _apply(
+      _snapshot
+          .copyWith(charging: true, chargeStarted: false)
+          .withMessage(null),
+    );
 
     await _webView.runJavaScript(
       payCommand(billing: billing, keepTheCard: keepsTheCard),
@@ -178,13 +185,7 @@ class CardFieldsController extends ChangeNotifier {
       );
 
     if (!session.servesFrom(pageUrl)) {
-      _fail(
-        const FieldsError(
-          failure: FieldsFailure.originNotAllowed,
-          message:
-              'The card fields page is not served from the registered origin.',
-        ),
-      );
+      _reportWrongOrigin();
 
       return controller;
     }
@@ -192,6 +193,24 @@ class CardFieldsController extends ChangeNotifier {
     unawaited(controller.loadRequest(Uri.parse(pageUrl), headers: pageHeaders));
 
     return controller;
+  }
+
+  /// Tells the sheet the page is on the wrong origin, once this controller exists.
+  ///
+  /// A microtask rather than a call from here: this runs while the constructor is still
+  /// running, and a listener that reaches back for the controller would find a field that
+  /// is still being initialised. Nothing can have reached the page by then either, so
+  /// nothing is lost by letting the turn finish first.
+  void _reportWrongOrigin() {
+    scheduleMicrotask(
+      () => _fail(
+        const FieldsError(
+          failure: FieldsFailure.originNotAllowed,
+          message:
+              'The card fields page is not served from the registered origin.',
+        ),
+      ),
+    );
   }
 
   Future<void> _start() async {

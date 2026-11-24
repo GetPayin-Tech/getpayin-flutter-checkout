@@ -105,8 +105,9 @@ opening anything. Useful on a diagnostic screen.
 static bool get busy
 ```
 
-True while a checkout is open. Guard your Pay button with it to avoid
-`GetPayInSessionBusyError` on a double tap.
+True while a checkout is open, the payment sheet included: one guard covers both, because a
+second checkout opened over a live one would stack a web view under a dead one. Guard your
+Pay button with it to avoid `GetPayInSessionBusyError` on a double tap.
 
 ## `declareHostAppSchemes(schemes)` and `hostAppSchemes()`
 
@@ -263,7 +264,13 @@ GetPayIn's own APIs and the other SDKs use — for logs and payloads, not for br
 ### `CheckoutResultCode`
 
 ```dart
-enum CheckoutResultCode { unreadableReturnLink, wrongInvoice, unexpectedInvoiceStatus }
+enum CheckoutResultCode {
+  unreadableReturnLink,
+  wrongInvoice,
+  unexpectedInvoiceStatus,
+  outcomeUnknown,
+  checkoutUnavailable,
+}
 ```
 
 Why a checkout was not reported as paid, when the reason is worth acting on. `message` is
@@ -275,10 +282,13 @@ on, and the key to look a message of your own up by.
 | `unreadableReturnLink`    | The link's own fields could not be read. Alert on it: the backend and this reader disagree about the shape. |
 | `wrongInvoice`            | The link named an invoice other than the one the checkout was opened for.                                   |
 | `unexpectedInvoiceStatus` | The link reported `success=1` with an `invoice_status` other than `PAID`.                                   |
+| `outcomeUnknown`          | A charge was sent and its answer never arrived. The card may well have been charged.                        |
+| `checkoutUnavailable`     | The sheet could not be shown at all and its hosted fallback was off. Nothing was charged.                   |
 
 A genuine decline carries no code at all, which is how it is told apart from a link that
-could not be read. The payer may well have paid in all three cases, so none of them is a
-reason to ask for payment again before the invoice has been checked on your server.
+could not be read. Only `checkoutUnavailable` means for certain that nothing happened; on
+every other code the payer may well have paid, so none of them is a reason to ask for
+payment again before the invoice has been checked on your server.
 
 ### `CheckoutPresentation`
 

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import '../checkout.dart';
 import '../core/messages.dart';
+import '../core/session_guard.dart';
 import '../core/return_url.dart';
 import '../platform.dart';
 import '../types.dart';
@@ -190,16 +191,28 @@ class GetPayInPaymentSheet extends StatefulWidget {
   ///
   /// The result is a report of what PayLink said, never proof of payment: confirm the
   /// `payment.*` webhook on your server before you deliver anything.
+  ///
+  /// It cannot be dragged away. A drag cannot be refused once it is under way, and a charge
+  /// the gateway already has must not be swiped off the screen; the sheet closes on its own
+  /// control, on the barrier and on Back, each of which asks first.
+  ///
+  /// It holds the one-checkout-at-a-time guard while it is open, so a second sheet is
+  /// refused and [GetPayInCheckout.busy] is true — which is what integrators are told to
+  /// gate their pay button on. The guard is released before the hosted fallback opens,
+  /// because that is a checkout of its own and takes the guard itself.
   static Future<CheckoutResult> show(
     BuildContext context,
     PaymentSheetConfiguration configuration,
   ) async {
-    final outcome = await showModalBottomSheet<_SheetOutcome>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0x00000000),
-      barrierColor: const Color(0x66000000),
-      builder: (_) => GetPayInPaymentSheet(configuration: configuration),
+    final outcome = await checkoutGuard.run(
+      () => showModalBottomSheet<_SheetOutcome>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: const Color(0x00000000),
+        barrierColor: const Color(0x66000000),
+        enableDrag: false,
+        builder: (_) => GetPayInPaymentSheet(configuration: configuration),
+      ),
     );
 
     return switch (outcome) {
@@ -264,6 +277,14 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   late final BillingFieldSet _billing =
       BillingFieldSet(country: _config.billingCountry);
 
+  /// How many times the wallet has been offered, which is also its key.
+  ///
+  /// A surface that has reported one outcome will not report another: its navigation
+  /// handler latches so a rebuilt sheet cannot report the same payment twice. That is the
+  /// right rule for a rebuild and the wrong one for a second attempt, so a declined wallet
+  /// gets a new surface rather than a reset latch.
+  int _walletAttempt = 0;
+
   _Screen _screen = _Screen.methods;
   SavedCard? _selected;
   bool _charging = false;
@@ -296,7 +317,33 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         expectedInvoiceId: _config.expectedInvoiceId));
   }
 
+  /// True once the gateway has the charge, whatever it does with it next.
+  ///
+  /// From here on nothing the page reports can mean "nothing was charged": the answer may
+  /// simply not have come back.
+  bool get _chargeIsOut => _card.chargeStarted;
+
+  /// True while closing the sheet would lose the answer to something already under way.
+  ///
+  /// A charge the gateway has, a saved card your own server is charging, or an issuer's
+  /// challenge the payer is partway through. Each can finish after the sheet would have
+  /// closed, and reporting that as cancelled reports a payment that may well have gone
+  /// through as one that did not.
+  bool get _isSettling => _chargeIsOut || _charging || _card.isAuthenticating;
+
   void _onFieldsFailure(FieldsError error) {
+    if (_chargeIsOut) {
+      _settle(
+        CheckoutResult(
+          status: CheckoutStatus.notPaid,
+          code: CheckoutResultCode.outcomeUnknown,
+          message: error.message ?? _config.strings.outcomeUnknown,
+        ),
+      );
+
+      return;
+    }
+
     if (!error.failure.sendsPayerToHostedCheckout) {
       _showRetryable(error.message ?? _config.strings.cardDeclined);
 
@@ -376,15 +423,34 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     }
   }
 
-  /// Reports a charge that could not be made at all.
+  /// Takes what the wallet answered, and offers it again if the payer can try once more.
+  ///
+  /// A wallet decline leaves the sheet open, so the surface that reported it has to go: it
+  /// has already latched, and the next answer would arrive to nobody.
+  void _onWalletResult(CheckoutResult result) {
+    if (result.status == CheckoutStatus.notPaid && result.code == null) {
+      setState(() => _walletAttempt++);
+    }
+
+    _settle(result);
+  }
+
+  /// Ends a saved-card charge whose answer never came.
   ///
   /// `chargeSavedCard` is the integrator's own call to their own server, so an exception
-  /// here is a network that went away rather than a card that was refused. The payer is told
-  /// in their own language and left able to try again, and the cause goes to the log, where
-  /// developer text belongs.
+  /// here is a network that went away rather than a card that was refused — and never
+  /// offered as one: their server may have charged the card and then lost the answer, so
+  /// "try another card" is how one payment becomes two. The sheet settles with a code that
+  /// says to read the invoice, and the cause goes to the log, where developer text belongs.
   void _reportChargeFailure(Object cause) {
     debugPrint('GetPayIn payment sheet: $cause');
-    _showRetryable(_config.strings.cardDeclined);
+    _settle(
+      CheckoutResult(
+        status: CheckoutStatus.notPaid,
+        code: CheckoutResultCode.outcomeUnknown,
+        message: _config.strings.outcomeUnknown,
+      ),
+    );
   }
 
   /// Shows the payer what went wrong with this attempt, and lets them make another.
@@ -432,27 +498,31 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   Widget build(BuildContext context) {
     final style = _config.style;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: Material(
-        color: style.background,
-        shape: RoundedRectangleBorder(
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(style.radius * 2)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 160),
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: _tallestIn(context)),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: _screenContent(context),
+    return PopScope(
+      canPop: !_isSettling,
+      child: Padding(
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: Material(
+          color: style.background,
+          shape: RoundedRectangleBorder(
+            borderRadius:
+                BorderRadius.vertical(top: Radius.circular(style.radius * 2)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 160),
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: _tallestIn(context)),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: _screenContent(context),
+                  ),
                 ),
               ),
             ),
@@ -492,6 +562,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         ClipRRect(
           borderRadius: BorderRadius.circular(_config.style.radius),
           child: WalletSurface(
+            key: ValueKey<int>(_walletAttempt),
             session: _config.session,
             pageUrl: _config.fieldsPageUrl,
             pageHeaders: _config.fieldsPageHeaders,
@@ -500,7 +571,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
             expectedInvoiceId: _config.expectedInvoiceId,
             ownSchemes: _config.ownSchemes,
             height: _config.style.rowHeight,
-            onComplete: _settle,
+            onComplete: _onWalletResult,
           ),
         ),
         const SizedBox(height: 16),
