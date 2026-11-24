@@ -40,6 +40,18 @@ card that may already have been charged.
   from a server that had already charged the card is one of those exceptions. The sheet
   settles with `outcomeUnknown` instead of inviting a second payment.
 
+### Changed
+
+- `doc/taking-payments.md` no longer says a `cancelled` checkout means the payer did not
+  pay. It is what the package reports whenever no trustworthy answer arrived, and a payment
+  can go through with no answer arriving.
+- `doc/setup.md` asks for `android:launchMode="singleTop"`, which the return link has always
+  needed, and says why `singleTask` is the wrong answer.
+- The docs said in three places that the payment sheet cannot keep a card and in a fourth
+  that it can. PayLink lifted that refusal in exchange for the consent wording the
+  integrator showed, so a sale that also vaults the card is the sheet's to take; a card
+  verification, which sells nothing, is still a hosted run.
+
 ## 0.1.0
 
 First release: the Flutter port of

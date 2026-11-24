@@ -10,7 +10,10 @@ enum FieldsFailure {
   /// Hosted fields are off for this company, or the gateway refused a capture context.
   fieldsUnavailable('fields_unavailable', fatal: true),
 
-  /// This payment is a card save, a subscription or an installment plan.
+  /// This payment is a card verification, a subscription or an installment plan.
+  ///
+  /// Not a sale that also keeps the card: that one the fields take, against the consent
+  /// wording the payment was created with.
   fieldsUnsupported('fields_unsupported', fatal: true),
 
   /// The client token expired (60 minutes) or was never valid.

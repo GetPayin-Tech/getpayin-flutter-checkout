@@ -81,8 +81,11 @@ abstract final class GetPayInCheckout {
   /// [invoiceIdInCheckoutUrl] reads off the `tokenization_url` when your server did not pass
   /// it on. Give the screen a title of its own: the payer is saving a card, not paying.
   ///
-  /// Hosted card fields cannot do this, so there is no payment-sheet equivalent: a save is
-  /// always a hosted run.
+  /// There is no payment-sheet equivalent, because `/tokens/init` hands back a hosted URL
+  /// and no client token: a verification sells nothing, so the hold it places and the words
+  /// it places it against are PayLink's own screen to show. A **sale** that also keeps the
+  /// card is a different thing and the sheet does take it — see
+  /// [PaymentSheetConfiguration.keepTheCard] and `doc/payment-sheet.md`.
   static Future<CardSaveResult> saveCard(
     String tokenizationUrl,
     OpenCheckoutOptions options,

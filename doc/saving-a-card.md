@@ -99,12 +99,19 @@ vaults the card off a sale the payer is already making — one authorization, th
 the card is kept. That is an ordinary payment, so open it with `GetPayInCheckout.open` and
 read it as one; the token still arrives by webhook.
 
+The payment sheet takes that payment too, in your own app, if you also send
+`tokenization_consent_text` — the wording you showed the payer, which PayLink stores as the
+evidence it cannot gather from a form it does not own. See
+[Keeping the card](payment-sheet.md#keeping-the-card).
+
 ## What cannot save a card
 
-The payment sheet. PayLink refuses `tokenize` on a hosted-fields payment — the consent
-wording would be on a form it does not own — and a card-save run reaches the sheet as
-`fields_unsupported`, which sends the payer to the hosted checkout. There is no "save this
-card" checkbox for that reason.
+The payment sheet, for a run whose only purpose is the save. `/v2/integration/tokens/init`
+answers with a `tokenization_url` and nothing else — there is no `mode: "fields"` on it and
+no client token to open a card box with — and the fields endpoints refuse a verification
+outright with `fields_unsupported` if one ever reaches them. A verification places a hold
+and releases it rather than selling anything, which is PayLink's own screen to show.
+`GetPayInCheckout.saveCard` is the way to take one.
 
 Hosted tokenization also needs CyberSource Unified Checkout on the account: it is the only
 checkout that mints a token on the authorization. `/tokens/init` answers `403` otherwise.

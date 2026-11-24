@@ -221,11 +221,12 @@ dropped and the card form is unaffected.
 
 ## Saved cards
 
-Hosted fields cannot save a card — PayLink refuses `tokenize` on a fields payment, because
-the consent wording would be on a form it does not own. So saved cards work like this:
+A token never reaches the app, in either direction: the sheet is told which card the payer
+picked, and your server is the only thing that can charge it. So saved cards work like this:
 
-1. A card is vaulted by a payment run through the **hosted checkout** with `tokenize: true`,
-   or through `/v2/integration/tokens/init`.
+1. A card is vaulted by a payment carrying `tokenize: true` — the sheet's own, as
+   [Keeping the card](#keeping-the-card) describes, or a hosted one — or by a
+   verification run through `/v2/integration/tokens/init`, which the sheet cannot take.
 2. Your server keeps the token it gets back against your own customer.
 3. The sheet shows what you pass in `savedCards` and tells you which one the payer picked.
 4. `chargeSavedCard` is **your server's** call to `/v2/integration/tokens/charge`, signed

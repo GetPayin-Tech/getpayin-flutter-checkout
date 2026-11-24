@@ -1,10 +1,9 @@
 /// A card the payer has already used, as your own backend remembers it.
 ///
-/// Hosted card fields cannot save a card — PayLink refuses `tokenize` on a fields payment,
-/// because the consent wording would be on a form it does not own — so a vaulted card comes
-/// from a hosted checkout run with `tokenize: true`, and charging one is a call your server
-/// makes with your hash token. The sheet only shows what you hand it and tells you which one
-/// the payer picked.
+/// A token never reaches the app in either direction: a card is vaulted by a payment created
+/// with `tokenize: true`, your server keeps what comes back on the `card_token.created`
+/// webhook, and charging one is a call your server makes with your hash token. The sheet
+/// only shows what you hand it and tells you which one the payer picked.
 class SavedCard {
   /// Creates a saved card.
   const SavedCard({

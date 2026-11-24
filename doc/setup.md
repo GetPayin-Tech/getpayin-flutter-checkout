@@ -41,6 +41,26 @@ there:
 </intent-filter>
 ```
 
+That same `<activity>` needs `android:launchMode="singleTop"`:
+
+```xml
+<activity
+  android:name=".MainActivity"
+  android:launchMode="singleTop"
+  android:exported="true">
+```
+
+Without it the return link starts a **second copy** of your activity, on top of the one that
+is waiting for the result. The new copy has no checkout running, so nothing resolves: your
+`open()` call stays pending behind a screen that has forgotten the payment, and the payer
+sees the app they started from only by backing out of it. With `singleTop`, the link is
+delivered to the activity already there — which is where the package is listening.
+
+Use `singleTop`, not `singleTask`. Under `singleTask`, tapping the app's own icon while the
+browser checkout is open brings the task forward and tears the Custom Tab off it; the
+package sees the app come back without a return link and reports `cancelled` 600 ms later,
+although the payment the payer was in the middle of may still go through.
+
 **`ios/Runner/Info.plist`**:
 
 ```xml

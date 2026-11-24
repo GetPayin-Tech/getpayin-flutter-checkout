@@ -55,10 +55,20 @@ answers HTTP 403.
 | ----------- | --------------------------------------------------------------------------------- | ------------------------------------- |
 | `paid`      | The return link said the payment went through.                                    | Confirm on your server, then deliver. |
 | `notPaid`   | Declined, failed, or a return link that could not be trusted. `message` says why. | Show `message`. See `code` below.     |
-| `cancelled` | The payer closed the checkout or the browser sheet.                               | Nothing. Leave the cart as it was.    |
+| `cancelled` | Nothing came back: the screen closed, or no return link followed it.              | Leave the cart as it was. See below.  |
 
-`cancelled` only ever comes from the payer closing the screen. A hosted checkout the payer
-abandons and returns from reports `notPaid`.
+**A cancelled checkout can still have been paid.** It is what the package reports whenever
+no trustworthy answer arrived, and a payment can go through with no answer arriving: the
+payer paid and then closed the screen, the page died after the charge, the return link came
+in after the grace period, or the provider was taken off the tree mid-checkout. Before you
+create a second payment for the same order, read the old invoice on your server — its
+`invoice.paid` webhook is the authority, and it will have fired.
+
+Leaving the cart as it was is safe. Creating a second payment is what is not: that is a
+new invoice, and nothing on PayLink's side can tell it is the same order. Reopening the
+**same** `checkout_url` is safe either way — a paid invoice is never charged twice; the
+hosted checkout answers that it is already complete, and the payment sheet refuses it with
+`already_paid`. A hosted checkout the payer abandons and comes back from reports `notPaid`.
 
 `invoiceId` is present when the return link carried one. `invoiceStatus` is the invoice
 state the link reported (`PAID`, `UNPAID`, `PARTIALLY_PAID`, `AUTHORIZED`), and only `PAID`
