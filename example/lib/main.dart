@@ -426,6 +426,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
       GetPayInCheckout.presentationFor(googlePayInApp: _googlePayInApp)
           .wireName;
 
+  /// Opens the trace of the last attempt on its own page.
+  ///
+  /// A page rather than a panel under the form: it is long, it is read after the fact, and
+  /// a tester scrolling past it to reach the pay button every time is a tester who stops
+  /// reading it.
+  Future<void> _openDebug() {
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => _DebugPage(
+          lines: _trace,
+          onCopy: _copyTrace,
+          onClear: () {
+            setState(_trace.clear);
+            _rememberTrace();
+          },
+        ),
+      ),
+    );
+  }
+
   /// Opens the integration the dev server should sign this payment with.
   ///
   /// Left empty, the server uses the credentials on the machine it runs on, which is how it
@@ -539,6 +559,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
         ),
         actions: <Widget>[
+          IconButton(
+            onPressed: _openDebug,
+            icon: Badge(
+              isLabelVisible: _trace.isNotEmpty,
+              label: Text('${_trace.length}'),
+              child: const Icon(Icons.bug_report_outlined),
+            ),
+            tooltip: 'What happened',
+          ),
           IconButton(
             onPressed: _busy ? null : _openSettings,
             icon: const Icon(Icons.settings_outlined),
@@ -723,17 +752,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
           if (failure != null) ...<Widget>[
             const SizedBox(height: 16),
             _Outcome(title: 'It would not open', lines: <String>[failure]),
-          ],
-          if (_trace.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 16),
-            _Debug(
-              lines: _trace,
-              onCopy: _copyTrace,
-              onClear: () {
-                setState(_trace.clear);
-                _rememberTrace();
-              },
-            ),
           ],
           if (result != null) ...<Widget>[
             const SizedBox(height: 16),
@@ -1051,13 +1069,14 @@ class _Toggle extends StatelessWidget {
   }
 }
 
-/// Everything the last attempt did, and a button that copies it.
+/// Everything the last attempt did, on a page of its own.
 ///
-/// A tester on a phone cannot read a log, so the app keeps its own and hands it over in one
-/// tap. It carries no secret: the hash token never reaches this side of the wire except as
-/// the field the gear sends, and that is not traced.
-class _Debug extends StatelessWidget {
-  const _Debug({
+/// A tester on a phone cannot read a log, so the app keeps one and hands it over in a tap.
+/// It carries no secret and no payer's details: the hash token never reaches this side of
+/// the wire except as the field the gear sends, and the card box reports what happened
+/// rather than what was typed.
+class _DebugPage extends StatelessWidget {
+  const _DebugPage({
     required this.lines,
     required this.onCopy,
     required this.onClear,
@@ -1069,46 +1088,63 @@ class _Debug extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _Card(
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            const Expanded(
-              child: Text(
-                'What happened',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-            ),
-            TextButton.icon(
-              onPressed: onClear,
-              icon: const Icon(Icons.delete_outline_rounded, size: 18),
-              label: const Text('Clear'),
-              style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF8A8B94)),
-            ),
-            TextButton.icon(
-              onPressed: () => onCopy(),
-              icon: const Icon(Icons.copy_rounded, size: 18),
-              label: const Text('Copy'),
-              style: TextButton.styleFrom(foregroundColor: brand),
-            ),
-          ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'What happened',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
-        const SizedBox(height: 4),
-        for (final line in lines)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              line,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.35,
-                fontFamily: 'monospace',
-                color: Color(0xFF42434E),
-              ),
-            ),
+        actions: <Widget>[
+          IconButton(
+            onPressed: () {
+              onClear();
+              Navigator.of(context).pop();
+            },
+            icon: const Icon(Icons.delete_outline_rounded),
+            tooltip: 'Clear',
           ),
-      ],
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => onCopy(),
+        backgroundColor: brand,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.copy_rounded),
+        label: const Text('Copy'),
+      ),
+      body: lines.isEmpty
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text(
+                  'Nothing yet. Take a payment and it will all be here.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: Color(0xFF6D6E78)),
+                ),
+              ),
+            )
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+              children: <Widget>[
+                _Card(
+                  children: <Widget>[
+                    for (final line in lines)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: SelectableText(
+                          line,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            height: 1.4,
+                            fontFamily: 'monospace',
+                            color: Color(0xFF42434E),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
     );
   }
 }
