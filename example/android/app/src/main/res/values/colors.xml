@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The colour behind the app, for the moments Flutter is not drawing yet.
+
+    The demo is light whatever the phone's dark mode says, so the window it sits in has to
+    be too. Left on the platform default, a process restarted while the payer was away on
+    the hosted checkout comes back as a black screen on a dark-mode phone.
+-->
+<resources>
+    <color name="windowCanvas">#F1F5F4</color>
+</resources>
