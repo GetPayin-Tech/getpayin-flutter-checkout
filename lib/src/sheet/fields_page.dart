@@ -102,12 +102,13 @@ String buildFieldsPageHtml(
   <div id="consent" hidden></div>
   <div id="wallet" hidden></div>
 
-<script src=$script></script>
 <script>
 (function () {
   var CHANNEL = $channelName;
+  var DEFAULT_SDK = $script;
   var fields = null;
   var started = false;
+  var loading = null;
 
   function post(message) {
     var channel = window[CHANNEL];
@@ -123,6 +124,36 @@ String buildFieldsPageHtml(
       code: (error && error.code) || 'unknown',
       message: (error && error.message) || 'The card could not be taken.'
     });
+  }
+
+  /**
+   * Loads PayLink's SDK, from wherever this payment's PayLink serves it.
+   *
+   * Fetched rather than written into the page because the page is hosted once and a payment
+   * knows which PayLink it belongs to: a page pinned to one environment, paid with a token
+   * minted on another, fails with an error naming the wrong system. The host says which,
+   * and the address it came from is the one that minted the token.
+   *
+   * Your Content Security Policy has to allow script from every PayLink you take payments
+   * on. One load per page: a second call waits on the first.
+   */
+  function loadSdk(url) {
+    if (loading) { return loading; }
+
+    loading = new Promise(function (resolve, reject) {
+      var tag = document.createElement('script');
+
+      tag.src = url || DEFAULT_SDK;
+      tag.async = false;
+      tag.onload = resolve;
+      tag.onerror = function () {
+        reject({ code: 'library_unavailable', message: 'The card fields library could not be loaded.' });
+      };
+
+      document.head.appendChild(tag);
+    });
+
+    return loading;
   }
 
   function applyStyle(style) {
@@ -265,6 +296,13 @@ String buildFieldsPageHtml(
     if (started) { return; }
 
     started = true;
+
+    loadSdk(config.sdkUrl).then(function () {
+      mount(config, walletMode);
+    }).catch(fail);
+  }
+
+  function mount(config, walletMode) {
     applyStyle(config.style);
 
     var wallets = config.wallets || [];
@@ -354,6 +392,7 @@ String buildFieldsPageHtml(
 
     start({
       clientToken: token,
+      sdkUrl: hash.get('s') || DEFAULT_SDK,
       wallets: (hash.get('w') || '').split(',').filter(Boolean),
       style: {}
     }, true);
@@ -375,11 +414,13 @@ String walletPageUrl({
   required String pageUrl,
   required String clientToken,
   required List<String> wallets,
+  String? sdkUrl,
 }) {
   final base = pageUrl.split('#').first;
   final query = <String>[
     't=${Uri.encodeQueryComponent(clientToken)}',
     if (wallets.isNotEmpty) 'w=${Uri.encodeQueryComponent(wallets.join(','))}',
+    if (sdkUrl != null) 's=${Uri.encodeQueryComponent(sdkUrl)}',
   ].join('&');
 
   return '$base#$query';

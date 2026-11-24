@@ -52,6 +52,12 @@ Serve that at your registered origin — `https://shop.example.com/paylink-field
 pass the URL to the sheet. [`doc/paylink-fields.html`](paylink-fields.html) is the same file
 with the host left as a placeholder, if you would rather copy it.
 
+The host you generate it with is the one it falls back on, not the only one it can use: the
+page asks `/init` which PayLink this payment belongs to and loads the SDK from there. One
+page serves staging and production, so long as your Content Security Policy allows script
+from both. Get this wrong with a page pinned to one of them and the error names the *other*
+environment, which is a long way to the answer.
+
 The origin is not a formality: it is baked into the capture context CyberSource issues and
 checked on every call, so a page served from anywhere else renders nothing at all. The sheet
 checks it for you and reports `origin_not_allowed` rather than showing you an empty box.

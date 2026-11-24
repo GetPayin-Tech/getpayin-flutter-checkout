@@ -202,6 +202,7 @@ class CardFieldsController extends ChangeNotifier {
     await _webView.runJavaScript(
       startFieldsCommand(
         clientToken: session.clientToken,
+        sdkUrl: session.sdkUrl,
         style: style.toCssVariables(),
         collectName: collectsBilling,
         collectConsent: keepsTheCard,

@@ -106,6 +106,7 @@ class _WalletSurfaceState extends State<WalletSurface> {
           pageUrl: widget.pageUrl,
           clientToken: widget.session.clientToken,
           wallets: <String>[widget.wallet.wireName],
+          sdkUrl: widget.session.sdkUrl,
         ),
       ),
       headers: widget.pageHeaders,

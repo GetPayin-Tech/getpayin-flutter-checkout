@@ -12,9 +12,27 @@ void main() {
 
   group('buildFieldsPageHtml', () {
     test('loads the SDK from PayLink and nothing else', () {
-      expect(html,
-          contains('src="https://pay.example.com/sdk/paylink-fields-v1.js"'));
+      expect(
+        html,
+        contains('"https://pay.example.com/sdk/paylink-fields-v1.js"'),
+      );
       expect(html, contains('PayLink.fields('));
+    });
+
+    /*
+     * The host is written in as the one to fall back on, not as the only one. A page is
+     * hosted once and the payment says which PayLink it belongs to, so a sheet pointed at
+     * another environment does not need the page regenerated for it.
+     */
+    test('takes the SDK address the host gives it over its own', () {
+      expect(html, contains('var DEFAULT_SDK ='));
+      expect(html, contains('loadSdk(config.sdkUrl)'));
+      expect(
+        html,
+        isNot(contains('<script src=')),
+        reason:
+            'a written-in tag is the thing that pins the page to one PayLink',
+      );
     });
 
     test('mounts the two fields the gateway has to render, and no more', () {

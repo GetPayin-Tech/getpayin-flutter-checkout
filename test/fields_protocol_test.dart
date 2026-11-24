@@ -184,6 +184,27 @@ void main() {
      * The expiry is read by the page from its own input, which sits in the box with the two
      * hosted fields so the three cannot drift out of alignment.
      */
+    /*
+     * The page is hosted once and the payment says which PayLink it belongs to, so the host
+     * tells it where the SDK lives rather than the page deciding when it was generated. A
+     * page pinned to one environment and a token minted on another is an error that names
+     * the wrong system entirely.
+     */
+    test('tells the page where its SDK lives', () {
+      final command = startFieldsCommand(
+        clientToken: 'abc',
+        style: const <String, Object?>{},
+        sdkUrl: 'https://devpay.example.com/sdk/paylink-fields-v1.js',
+      );
+
+      expect(
+        command,
+        contains(
+          '"sdkUrl":"https://devpay.example.com/sdk/paylink-fields-v1.js"',
+        ),
+      );
+    });
+
     test('reads the name the page holds, which the sheet bills the card to',
         () {
       final event = parseFieldsEvent(

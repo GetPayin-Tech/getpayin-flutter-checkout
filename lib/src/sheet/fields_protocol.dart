@@ -275,10 +275,16 @@ String describeFieldsEvent(FieldsEvent event) {
 /// The client token is handed over this way rather than in the page's URL: a URL reaches
 /// the host's access log, the browser's history and any `Referer` the page sends, and a
 /// token that names a payment has no business in any of them.
+///
+/// [sdkUrl] is where that payment's PayLink serves the SDK, as `/init` reported it. The
+/// page is hosted once and a payment knows which PayLink it belongs to, so the host says
+/// which one rather than the page deciding when it was generated — a page pinned to one
+/// environment and a token minted on another fails with an error naming the wrong system.
 String startFieldsCommand({
   required String clientToken,
   required Map<String, Object?> style,
   List<String> wallets = const <String>[],
+  String? sdkUrl,
   bool collectName = false,
   bool collectConsent = false,
   String nameLabel = 'Name on card',
@@ -288,6 +294,7 @@ String startFieldsCommand({
 }) {
   final config = jsonEncode(<String, Object?>{
     'clientToken': clientToken,
+    if (sdkUrl != null) 'sdkUrl': sdkUrl,
     'wallets': wallets,
     'style': style,
     'collectName': collectName,
