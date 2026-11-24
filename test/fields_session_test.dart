@@ -129,4 +129,24 @@ void main() {
           FieldsFailure.sessionInvalid);
     });
   });
+
+  /*
+   * Codes the session middleware can refuse a browser call with. An unmapped one arrives as
+   * `unknown`, which tells an integrator the category and nothing they can act on -- and
+   * these two are both things they can fix in a dashboard.
+   */
+  group('the refusals a fields session can carry', () {
+    const refusals = <String, FieldsFailure>{
+      'integration_inactive': FieldsFailure.integrationInactive,
+      'payment_not_found': FieldsFailure.paymentNotFound,
+    };
+
+    refusals.forEach((code, failure) {
+      test('reads $code rather than falling through to unknown', () {
+        expect(FieldsFailure.fromCode(code), failure);
+        expect(failure.fatal, isTrue,
+            reason: 'nothing the payer types will change it');
+      });
+    });
+  });
 }

@@ -212,10 +212,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
   void _rememberTrace() => _store.put('trace', List<String>.from(_trace));
 
   /// Notes one thing that happened, for the debug panel.
+  ///
+  /// Safe to call from anything that finished after the screen went away: Android can
+  /// destroy this activity while the payer is on the hosted checkout, and a callback that
+  /// came back afterwards would otherwise bring the whole attempt down with it.
   void _say(String line) {
     final at = DateTime.now().toIso8601String().substring(11, 19);
 
     _trace.add('$at  $line');
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   /// Asks the dev server for a payment and takes it, on whichever surface is asked for.
@@ -274,14 +282,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
           '${result.code == null ? '' : ' / ${result.code!.wireName}'}'
           '${result.invoiceStatus == null ? '' : ' / ${result.invoiceStatus}'}');
 
-      setState(() => _result = result);
+      _result = result;
     } on GetPayInCheckoutError catch (error) {
       _say('threw: ${error.runtimeType} ${error.message}');
-      setState(() => _failure = error.message);
+      _failure = error.message;
     } catch (error, stack) {
       _say('threw: $error');
       _say('at: ${_firstFrameOf(stack)}');
-      setState(() => _failure = '$error');
+      _failure = '$error';
     } finally {
       _rememberTrace();
 
@@ -304,14 +312,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageHeaders: fieldsPageHeaders,
         style: sheetStyle,
         collectBillingAddress: _collectBilling,
-        onDiagnostic: (note) => setState(() => _say('page: $note')),
+        onDiagnostic: (note) => _say('page: $note'),
         onHandover: (error) {
           _say('handover: ${error.failure.name}  ${error.message ?? ''}');
-          setState(
-            () => _note = 'The sheet handed over: ${error.failure.name}. '
-                '${error.message ?? ''} '
-                'The payment was taken on the hosted checkout.',
-          );
+          _note = 'The sheet handed over: ${error.failure.name}. '
+              '${error.message ?? ''} '
+              'The payment was taken on the hosted checkout.';
         },
         returnUrl: returnUrl,
         expectedInvoiceId: session.invoiceId,
@@ -337,7 +343,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final why = _whySheetIsNotShowing(payment, session);
 
       _say('no sheet: $why');
-      setState(() => _note = why);
+      _note = why;
     }
 
     return GetPayInCheckout.open(

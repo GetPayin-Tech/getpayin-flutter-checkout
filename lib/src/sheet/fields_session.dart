@@ -19,6 +19,15 @@ enum FieldsFailure {
   /// The page is not served from the integration's registered origin.
   originNotAllowed('origin_not_allowed', fatal: true),
 
+  /// The integration itself has been switched off in the GetPayIn dashboard.
+  ///
+  /// Nothing about the page, the payment or the card: the account's own setting. A payer
+  /// cannot type their way past it and neither can a retry.
+  integrationInactive('integration_inactive', fatal: true),
+
+  /// The payment the client token names is gone, or was never there.
+  paymentNotFound('payment_not_found', fatal: true),
+
   /// The card field library could not load: a content blocker, or a CSP that forbids it.
   libraryUnavailable('library_unavailable', fatal: true),
 
