@@ -14,6 +14,7 @@ dependencies:
     path: ../
   # The harness asks its own dev server for a payment, the way an app asks its backend.
   http: ^1.2.0
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_lints: '>=5.0.0 <7.0.0'

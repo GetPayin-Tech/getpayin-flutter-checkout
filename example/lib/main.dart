@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
 import 'package:http/http.dart' as http;
 
+import 'store.dart';
+
 /// The scheme this app answers to, declared in `AndroidManifest.xml` and `Info.plist`.
 const String appScheme = 'myapp';
 
@@ -46,9 +48,10 @@ const Map<String, String> fieldsPageHeaders = <String, String>{
 ///
 /// The checkout refuses all of them, so a page inside it cannot reach the app's own
 /// deep-link routes.
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   declareHostAppSchemes(const <String>[appScheme]);
-  runApp(const ExampleApp());
+  runApp(ExampleApp(store: await DemoStore.open()));
 }
 
 /// A harness for the checks that only a phone can make.
@@ -57,8 +60,11 @@ void main() {
 /// opens it exactly as an integration would: same provider, same options, same reading of
 /// the result. It is what `CONTRIBUTING.md` asks you to run before a release.
 class ExampleApp extends StatelessWidget {
-  /// Creates the example app.
-  const ExampleApp({super.key});
+  /// Creates the example app over what the last run left behind.
+  const ExampleApp({required this.store, super.key});
+
+  /// What the demo remembered.
+  final DemoStore store;
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +78,7 @@ class ExampleApp extends StatelessWidget {
           foregroundColor: Colors.white,
         ),
       ),
-      home: GetPayInProvider(child: const CheckoutPage()),
+      home: GetPayInProvider(child: CheckoutPage(store: store)),
     );
   }
 }
@@ -105,44 +111,47 @@ const List<String> currencies = <String>['EGP', 'EUR', 'USD'];
 
 /// The one screen: what to charge, how to open it, and what came back.
 class CheckoutPage extends StatefulWidget {
-  /// Creates the page.
-  const CheckoutPage({super.key});
+  /// Creates the page over what the last run left behind.
+  const CheckoutPage({required this.store, super.key});
+
+  /// What the demo remembered.
+  final DemoStore store;
 
   @override
   State<CheckoutPage> createState() => _CheckoutPageState();
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
-  final TextEditingController _firstName = TextEditingController(text: 'John');
-  final TextEditingController _lastName = TextEditingController(text: 'Doe');
-  final TextEditingController _email = TextEditingController(
-    text: 'john.doe@example.com',
-  );
-  final TextEditingController _title = TextEditingController(
-    text: 'Wireless Headphones x1',
-  );
-  final TextEditingController _amount = TextEditingController(text: '10.00');
-  final TextEditingController _server = TextEditingController(
-    text: defaultPaymentsServer,
-  );
-  final TextEditingController _fieldsPage = TextEditingController(
-    text: defaultFieldsPage,
-  );
+  late final DemoStore _store = widget.store;
+
+  late final TextEditingController _firstName =
+      _remembered('first_name', 'John');
+  late final TextEditingController _lastName = _remembered('last_name', 'Doe');
+  late final TextEditingController _email =
+      _remembered('email', 'john.doe@example.com');
+  late final TextEditingController _title =
+      _remembered('title', 'Wireless Headphones x1');
+  late final TextEditingController _amount = _remembered('amount', '10.00');
+  late final TextEditingController _server =
+      _remembered('server', defaultPaymentsServer);
+  late final TextEditingController _fieldsPage =
+      _remembered('fields_page', defaultFieldsPage);
 
   /// The integration the dev server should sign with, when it is not to use its own.
   ///
-  /// Held in memory and nowhere else. A hash token written to the phone's storage is a hash
-  /// token on a lost phone, and this one is only here so a tester can point the harness at a
-  /// second account without editing a file on their machine and restarting.
-  final TextEditingController _baseUrl = TextEditingController();
-  final TextEditingController _publicToken = TextEditingController();
-  final TextEditingController _hashToken = TextEditingController();
+  /// Kept with the rest so a tester is not retyping an account every launch. It is written
+  /// to this app's own storage, which on a developer's test phone is the trade they asked
+  /// for; it is still never compiled in, and the signing still happens on the server.
+  late final TextEditingController _baseUrl = _remembered('base_url', '');
+  late final TextEditingController _publicToken =
+      _remembered('public_token', '');
+  late final TextEditingController _hashToken = _remembered('hash_token', '');
 
-  String _currency = 'EGP';
-  bool _googlePayInApp = false;
-  bool _useSheet = false;
-  bool _collectBilling = false;
-  bool _keepCard = false;
+  late String _currency = _store.text('currency', 'EGP');
+  late bool _googlePayInApp = _store.flag('google_pay_in_app');
+  late bool _useSheet = _store.flag('use_sheet');
+  late bool _collectBilling = _store.flag('collect_billing');
+  late bool _keepCard = _store.flag('keep_card');
   bool _busy = false;
   String? _step;
   CheckoutResult? _result;
@@ -154,7 +163,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
   /// Kept as plain lines rather than objects because its only reader is a person pasting it
   /// into a message. Nothing secret goes in: the hash token is never here, because it never
   /// leaves the dev server except as the one field the gear sends it in.
-  final List<String> _trace = <String>[];
+  late final List<String> _trace = _store.lines('trace');
+
+  /// A field that starts on what the last run left in it, and saves what is typed.
+  TextEditingController _remembered(String key, String fallback) {
+    final controller = TextEditingController(text: _store.text(key, fallback));
+
+    controller.addListener(() => _store.put(key, controller.text));
+
+    return controller;
+  }
 
   @override
   void dispose() {
@@ -170,6 +188,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _fieldsPage.dispose();
     super.dispose();
   }
+
+  /// Keeps the trace, so the question "what did it do last time" survives the app closing.
+  void _rememberTrace() => _store.put('trace', List<String>.from(_trace));
 
   /// Notes one thing that happened, for the debug panel.
   void _say(String line) {
@@ -224,6 +245,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _say('threw: $error');
       setState(() => _failure = '$error');
     } finally {
+      _rememberTrace();
+
       if (mounted) {
         setState(() {
           _busy = false;
@@ -559,7 +582,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       'what the issuer checks.',
                   value: _collectBilling,
                   enabled: !_busy,
-                  onChanged: (value) => setState(() => _collectBilling = value),
+                  onChanged: (value) {
+                    setState(() => _collectBilling = value);
+                    _store.put('collect_billing', value);
+                  },
                 ),
               ],
               _Toggle(
@@ -568,7 +594,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     'sheet.',
                 value: _googlePayInApp,
                 enabled: !_busy,
-                onChanged: (value) => setState(() => _googlePayInApp = value),
+                onChanged: (value) {
+                  setState(() => _googlePayInApp = value);
+                  _store.put('google_pay_in_app', value);
+                },
               ),
               Text(
                 'Opens in: $_presentation',
@@ -651,7 +680,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ],
           if (_trace.isNotEmpty) ...<Widget>[
             const SizedBox(height: 16),
-            _Debug(lines: _trace, onCopy: _copyTrace),
+            _Debug(
+              lines: _trace,
+              onCopy: _copyTrace,
+              onClear: () {
+                setState(_trace.clear);
+                _rememberTrace();
+              },
+            ),
           ],
           if (result != null) ...<Widget>[
             const SizedBox(height: 16),
@@ -975,10 +1011,15 @@ class _Toggle extends StatelessWidget {
 /// tap. It carries no secret: the hash token never reaches this side of the wire except as
 /// the field the gear sends, and that is not traced.
 class _Debug extends StatelessWidget {
-  const _Debug({required this.lines, required this.onCopy});
+  const _Debug({
+    required this.lines,
+    required this.onCopy,
+    required this.onClear,
+  });
 
   final List<String> lines;
   final Future<void> Function() onCopy;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
@@ -991,6 +1032,13 @@ class _Debug extends StatelessWidget {
                 'What happened',
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
               ),
+            ),
+            TextButton.icon(
+              onPressed: onClear,
+              icon: const Icon(Icons.delete_outline_rounded, size: 18),
+              label: const Text('Clear'),
+              style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF8A8B94)),
             ),
             TextButton.icon(
               onPressed: () => onCopy(),
