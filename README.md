@@ -89,7 +89,7 @@ server gave you one: leaving it null turns off the check that a paid link belong
 invoice. A `notPaid` the package decided for itself carries a `code`, which a genuine
 decline does not. See [Taking payments](doc/taking-payments.md#code-on-a-notpaid).
 
-> **The result in the app is not proof of invoice.paid* Your return scheme is public, so
+> **The result in the app is not proof of payment.** Your return scheme is public, so
 > anything on the phone can forge that link. Confirm the `invoice.paid` webhook on your
 > server before you deliver the order. The [Security model](doc/security.md) explains what
 > the package does on its side, and why it is not enough on its own.

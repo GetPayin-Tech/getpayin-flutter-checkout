@@ -1,5 +1,39 @@
 # Example
 
+Your server creates the payment and gives the app its `checkout_url` and invoice id. The app
+opens the checkout and reads the result.
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:getpayin_checkout/getpayin_checkout.dart';
+
+void main() {
+  declareHostAppSchemes(const ['myapp']);
+  runApp(MaterialApp(home: GetPayInProvider(child: const ShopPage())));
+}
+
+/// Takes one payment. `payment` comes from your own server, which called
+/// `POST /api/v2/integration/init`.
+Future<void> pay(Payment payment) async {
+  final result = await GetPayInCheckout.open(
+    payment.checkoutUrl,
+    OpenCheckoutOptions(
+      returnUrl: 'myapp://payment-return',
+      expectedInvoiceId: payment.invoiceId,
+    ),
+  );
+
+  if (result.status == CheckoutStatus.paid) {
+    // Deliver the order only once your server has the invoice.paid webhook.
+  }
+}
+```
+
+[Setup](../doc/setup.md) covers the return scheme and the server, and
+[Taking payments](../doc/taking-payments.md) covers every result.
+
+## The test app in this folder
+
 A harness for the checks that only a phone can make, and the thing the `apk` workflow
 builds.
 

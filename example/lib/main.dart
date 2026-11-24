@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 // Material moved to package:material_ui after Flutter 3.47, which does not exist in the
 // older versions this package still supports.
 // ignore: deprecated_member_use
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
