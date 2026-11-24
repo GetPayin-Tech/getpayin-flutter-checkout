@@ -4,6 +4,7 @@ import 'dart:convert';
 // older versions this package still supports.
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
 import 'package:http/http.dart' as http;
 
@@ -148,6 +149,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _failure;
   String? _note;
 
+  /// Everything this attempt did, in order, for a tester reporting back.
+  ///
+  /// Kept as plain lines rather than objects because its only reader is a person pasting it
+  /// into a message. Nothing secret goes in: the hash token is never here, because it never
+  /// leaves the dev server except as the one field the gear sends it in.
+  final List<String> _trace = <String>[];
+
   @override
   void dispose() {
     _firstName.dispose();
@@ -163,6 +171,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
     super.dispose();
   }
 
+  /// Notes one thing that happened, for the debug panel.
+  void _say(String line) {
+    final at = DateTime.now().toIso8601String().substring(11, 19);
+
+    _trace.add('$at  $line');
+  }
+
   /// Asks the dev server for a payment and takes it, on whichever surface is asked for.
   Future<void> _pay() async {
     setState(() {
@@ -170,8 +185,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _result = null;
       _failure = null;
       _note = null;
+      _trace.clear();
       _step = 'Creating the payment…';
     });
+
+    _say('pay $_priced  sheet=$_useSheet  billing=$_collectBilling  '
+        'keepCard=$_keepCard  googlePayInApp=$_googlePayInApp');
+    _say('opens in: $_presentation');
+
+    if (_baseUrl.text.trim().isNotEmpty) {
+      _say('base url override: ${_baseUrl.text.trim()}');
+    }
 
     try {
       final payment = await _createPayment();
@@ -179,15 +203,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       setState(() => _step = 'Waiting for the payer…');
 
-      final result =
-          _useSheet && session != null && _fieldsPage.text.trim().isNotEmpty
-              ? await _showSheet(session)
-              : await _openHostedCheckout(payment, session);
+      final onTheSheet =
+          _useSheet && session != null && _fieldsPage.text.trim().isNotEmpty;
+
+      _say('surface: ${onTheSheet ? 'payment sheet' : 'hosted checkout'}');
+
+      final result = onTheSheet
+          ? await _showSheet(session)
+          : await _openHostedCheckout(payment, session);
+
+      _say('result: ${result.status.wireName}'
+          '${result.code == null ? '' : ' / ${result.code!.wireName}'}'
+          '${result.invoiceStatus == null ? '' : ' / ${result.invoiceStatus}'}');
 
       setState(() => _result = result);
     } on GetPayInCheckoutError catch (error) {
+      _say('threw: ${error.runtimeType} ${error.message}');
       setState(() => _failure = error.message);
     } catch (error) {
+      _say('threw: $error');
       setState(() => _failure = '$error');
     } finally {
       if (mounted) {
@@ -209,6 +243,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageHeaders: fieldsPageHeaders,
         style: sheetStyle,
         collectBillingAddress: _collectBilling,
+        onHandover: (failure) {
+          _say('handover: ${failure.name}');
+          setState(
+            () => _note = 'The sheet handed over: ${failure.name}. '
+                'The payment was taken on the hosted checkout.',
+          );
+        },
         returnUrl: returnUrl,
         expectedInvoiceId: session.invoiceId,
         amountLabel: _priced,
@@ -230,7 +271,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
     PayLinkFieldsSession? session,
   ) async {
     if (_useSheet) {
-      setState(() => _note = _whySheetIsNotShowing(payment, session));
+      final why = _whySheetIsNotShowing(payment, session);
+
+      _say('no sheet: $why');
+      setState(() => _note = why);
     }
 
     return GetPayInCheckout.open(
@@ -295,8 +339,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
       throw StateError('${body['error'] ?? answer.body}');
     }
 
+    final data = body['data']! as Map<String, Object?>;
+
+    _say('init: invoice ${data['invoice_id']}  '
+        'fields=${data.containsKey('fields')}  '
+        'tokenization=${data['tokenization_id'] ?? 'none'}  '
+        'refusal=${body['fields_error'] ?? 'none'}');
+
     return _Payment(
-      data: body['data']! as Map<String, Object?>,
+      data: data,
       fieldsError: body['fields_error'] as String?,
     );
   }
@@ -380,6 +431,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
       ),
     );
+  }
+
+  /// Puts the whole trace on the clipboard, for pasting into a report.
+  Future<void> _copyTrace() async {
+    final result = _result;
+    final report = <String>[
+      'GetPayIn Flutter demo',
+      'android  ${_useSheet ? 'sheet' : 'hosted'}  $_presentation',
+      ..._trace,
+      if (_note != null) 'note: $_note',
+      if (_failure != null) 'failure: $_failure',
+      if (result?.message != null) 'message: ${result!.message}',
+    ];
+
+    await Clipboard.setData(ClipboardData(text: report.join('\n')));
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Copied')),
+      );
+    }
   }
 
   /// What the pay button says, and what the sheet labels its own.
@@ -576,6 +648,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
           if (failure != null) ...<Widget>[
             const SizedBox(height: 16),
             _Outcome(title: 'It would not open', lines: <String>[failure]),
+          ],
+          if (_trace.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 16),
+            _Debug(lines: _trace, onCopy: _copyTrace),
           ],
           if (result != null) ...<Widget>[
             const SizedBox(height: 16),
@@ -889,6 +965,56 @@ class _Toggle extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Everything the last attempt did, and a button that copies it.
+///
+/// A tester on a phone cannot read a log, so the app keeps its own and hands it over in one
+/// tap. It carries no secret: the hash token never reaches this side of the wire except as
+/// the field the gear sends, and that is not traced.
+class _Debug extends StatelessWidget {
+  const _Debug({required this.lines, required this.onCopy});
+
+  final List<String> lines;
+  final Future<void> Function() onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            const Expanded(
+              child: Text(
+                'What happened',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => onCopy(),
+              icon: const Icon(Icons.copy_rounded, size: 18),
+              label: const Text('Copy'),
+              style: TextButton.styleFrom(foregroundColor: brand),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        for (final line in lines)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              line,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.35,
+                fontFamily: 'monospace',
+                color: Color(0xFF42434E),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

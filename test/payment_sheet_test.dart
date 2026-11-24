@@ -48,11 +48,13 @@ void main() {
     Future<CheckoutResult> Function(SavedCard card)? chargeSavedCard,
     bool fallBackToHostedCheckout = true,
     bool collectBillingAddress = false,
+    void Function(FieldsFailure failure)? onHandover,
     Duration successPause = Duration.zero,
     String origin = testOrigin,
   }) {
     return PaymentSheetConfiguration(
       collectBillingAddress: collectBillingAddress,
+      onHandover: onHandover,
       successPause: successPause,
       session: testFieldsSession(origin: origin),
       fieldsPageUrl: testFieldsPageUrl,
@@ -634,6 +636,58 @@ void main() {
       expect(charge, contains('"address":"12 Noyes Street"'));
       expect(charge, contains('"city":"Cairo"'));
       expect(charge, contains('"postalCode":"11511"'));
+    });
+  });
+
+  /*
+   * A sheet that gives up mid-payment and hands the payer to the hosted checkout is doing
+   * the right thing, but it used to do it silently: the integrator saw a browser open and
+   * had nothing to go on. The reason is the one thing they need to fix it.
+   */
+  group('handing over to the hosted checkout', () {
+    testWidgets('says why before it does', (tester) async {
+      final reasons = <FieldsFailure>[];
+
+      // The hosted checkout it hands to is not what is under test, and whether it opens
+      // depends on a session guard other tests share.
+      (await openSheet(
+        tester,
+        configuration(onHandover: reasons.add),
+        withProvider: true,
+      ))
+          .ignore();
+
+      postToCard(<String, Object?>{
+        'type': 'error',
+        'code': 'origin_not_allowed',
+        'message':
+            'The card fields page is not served from the registered origin.',
+      });
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(reasons, <FieldsFailure>[FieldsFailure.originNotAllowed]);
+    });
+
+    testWidgets('says nothing for a decline the payer can retry',
+        (tester) async {
+      final reasons = <FieldsFailure>[];
+
+      (await openSheet(
+        tester,
+        configuration(onHandover: reasons.add),
+        withProvider: true,
+      ))
+          .ignore();
+
+      postToCard(<String, Object?>{
+        'type': 'error',
+        'code': 'card_invalid',
+        'message': 'Please check the card details and try again.',
+      });
+      await pumpFrames(tester);
+
+      expect(reasons, isEmpty);
     });
   });
 }

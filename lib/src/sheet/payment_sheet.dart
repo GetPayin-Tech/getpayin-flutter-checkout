@@ -35,6 +35,7 @@ class PaymentSheetConfiguration {
     this.billingCountries = defaultBillingCountries,
     this.billingCountry = 'EG',
     this.successPause = const Duration(milliseconds: 1200),
+    this.onHandover,
     this.keepTheCard = false,
     this.expectedInvoiceId,
     this.amountLabel,
@@ -87,6 +88,17 @@ class PaymentSheetConfiguration {
   /// Your company has to have card tokenization enabled, and the charge carries the
   /// agreement with it. Nothing is kept without the payer ticking it.
   final bool keepTheCard;
+
+  /// Called when the sheet gives up and hands the payer to the hosted checkout.
+  ///
+  /// The handover is the right thing to do and the payer is served by it, but it used to be
+  /// silent: an integrator saw a browser open with nothing to say why, and the reason is the
+  /// only part they can act on. [FieldsFailure] names it — a page on the wrong origin, a
+  /// company without the fields, a session that has expired.
+  ///
+  /// Never called for a decline or a mistyped card: those stay on the sheet for the payer to
+  /// correct, and are not a handover.
+  final void Function(FieldsFailure failure)? onHandover;
 
   /// How long the sheet says the payment went through before it closes.
   ///
@@ -151,6 +163,19 @@ class GetPayInPaymentSheet extends StatefulWidget {
   /// The payment this sheet is taking.
   final PaymentSheetConfiguration configuration;
 
+  /// Opens the hosted checkout, having told the integrator why the sheet could not.
+  static Future<CheckoutResult> _handOver(
+    PaymentSheetConfiguration configuration,
+    FieldsFailure failure,
+  ) {
+    configuration.onHandover?.call(failure);
+
+    return GetPayInCheckout.open(
+      configuration.session.checkoutUrl,
+      configuration.hostedOptions,
+    );
+  }
+
   /// Presents the sheet and completes once the payment ends.
   ///
   /// The result is a report of what PayLink said, never proof of payment: confirm the
@@ -169,10 +194,7 @@ class GetPayInPaymentSheet extends StatefulWidget {
 
     return switch (outcome) {
       _Settled(:final result) => result,
-      _Fallback() => GetPayInCheckout.open(
-          configuration.session.checkoutUrl,
-          configuration.hostedOptions,
-        ),
+      _Fallback(:final failure) => _handOver(configuration, failure),
       null => cancelledResult(closedByPayerMessage),
     };
   }
@@ -193,7 +215,10 @@ class _Settled extends _SheetOutcome {
 }
 
 class _Fallback extends _SheetOutcome {
-  const _Fallback();
+  const _Fallback(this.failure);
+
+  /// What the fields could not do, for an integrator who has to fix it.
+  final FieldsFailure failure;
 }
 
 enum _Screen { methods, selectCard, newCard, done }
@@ -275,7 +300,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       return;
     }
 
-    _close(const _Fallback());
+    _close(_Fallback(error.failure));
   }
 
   void _settle(CheckoutResult result) {
