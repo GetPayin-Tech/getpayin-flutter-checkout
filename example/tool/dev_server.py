@@ -193,6 +193,69 @@ FALLS_BACK_TO_CHECKOUT = {
 }
 
 
+CARDS = CONFIG.parent / "dev-cards.json"
+
+
+def read_cards() -> list[dict]:
+    """The cards this harness has been told about, newest first."""
+    try:
+        return json.loads(CARDS.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def remember_card(card: dict) -> None:
+    """Keeps one card, replacing any earlier record of the same token."""
+    kept = [c for c in read_cards() if c.get("card_token") != card.get("card_token")]
+
+    CARDS.parent.mkdir(parents=True, exist_ok=True)
+    CARDS.write_text(json.dumps([card] + kept, indent=2))
+    CARDS.chmod(0o600)
+
+
+def charge_card(asked: dict, config: dict[str, str]) -> dict:
+    """Charges a vaulted card, which only a server may do.
+
+    The signature covers every field except itself and the public token, in the order they
+    are sent -- so the order below is part of the contract, not a style choice.
+    """
+    payload: "OrderedDict[str, str]" = OrderedDict(
+        (
+            ("card_token", str(asked.get("card_token", "")).strip()),
+            ("initiator", "customer"),
+            ("currency", str(asked.get("currency", "")).strip().upper()),
+            ("price", str(asked.get("amount", "")).strip()),
+            ("product", str(asked.get("title") or "Example order")),
+        )
+    )
+
+    signed = "".join(str(value) for value in payload.values())
+    digest = hmac.new(
+        config["GETPAYIN_HASH_TOKEN"].encode(), signed.encode(), hashlib.sha256
+    ).digest()
+
+    payload["token"] = config["GETPAYIN_PUBLIC_TOKEN"]
+    payload["signature"] = base64.b64encode(digest).decode()
+
+    url = config["GETPAYIN_BASE_URL"].rstrip("/") + "/api/v2/integration/tokens/charge"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=30, context=ssl.create_default_context()) as answer:
+            return json.loads(answer.read().decode())
+    except urllib.error.HTTPError as failure:
+        raise RuntimeError(f"{failure.code} from {url}: {failure.read().decode()[:400]}") from failure
+
+
 def refused_code(detail: str) -> str | None:
     """The `code` a refusal carries, when it is one hosted fields can be refused with."""
     try:
@@ -218,7 +281,71 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_GET(self) -> None:  # noqa: N802 - the name the server calls
+        if self.path.startswith("/paylink-fields.html"):
+            self._send_page()
+
+            return
+
+        if self.path.startswith("/cards"):
+            self._send(200, {"cards": read_cards()})
+
+            return
+
         self._send(200, {"ok": True, "base_url": self.config["GETPAYIN_BASE_URL"]})
+
+    def _send_page(self) -> None:
+        """Serves the card fields page, pointed at whichever PayLink this server uses.
+
+        Served from here so one tunnel covers the page, the webhook and the charge: the
+        origin registered on the integration has to serve the page, and the webhook has to
+        arrive at the same host. A second server for the page is a second thing to get
+        wrong.
+        """
+        page = (Path(__file__).resolve().parents[2] / "doc" / "paylink-fields.html")
+        html = page.read_text().replace(
+            "<YOUR-PAYLINK-HOST>", self.config["GETPAYIN_BASE_URL"].rstrip("/")
+        )
+        encoded = html.encode()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _webhook(self, asked: dict) -> None:
+        """Keeps the card a `card_token.created` webhook delivers.
+
+        The token itself only ever arrives here. It never reaches the app and never should:
+        a vaulted card is charged with the hash token, which is what makes this a server.
+        """
+        data = asked.get("data") if isinstance(asked.get("data"), dict) else asked
+
+        if data.get("card_token"):
+            remember_card(
+                {
+                    "card_token": data.get("card_token"),
+                    "brand": data.get("card_brand"),
+                    "last4": data.get("card_last4"),
+                    "expiry_month": data.get("card_expiry_month") or data.get("expiry_month"),
+                    "expiry_year": data.get("card_expiry_year") or data.get("expiry_year"),
+                    "invoice_id": data.get("invoice_id"),
+                }
+            )
+            print(f"Kept card ending {data.get('card_last4')} from invoice {data.get('invoice_id')}")
+
+        self._send(200, {"ok": True})
+
+    def _charge(self, asked: dict) -> None:
+        """Charges a card this harness was told about, the way a real backend would."""
+        try:
+            answer = charge_card(asked, self._credentials(asked))
+        except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
+            self._send(502, {"error": str(failure)})
+
+            return
+
+        self._send(200, answer)
 
     def _credentials(self, asked: dict) -> dict[str, str]:
         """This server's own credentials, with anything the app sent taking precedence.
@@ -239,6 +366,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - the name the server calls
         length = int(self.headers.get("Content-Length") or 0)
         asked = json.loads(self.rfile.read(length) or b"{}")
+
+        if self.path.startswith("/charge"):
+            self._charge(asked)
+
+            return
+
+        # Anything that is not /init or /charge is treated as the webhook, because the URL
+        # on the integration is whatever the dashboard was set to and this server would
+        # rather receive the card than be right about the path.
+        if not self.path.startswith("/init") and self.path != "/":
+            self._webhook(asked)
+
+            return
 
         try:
             payment = create_payment(

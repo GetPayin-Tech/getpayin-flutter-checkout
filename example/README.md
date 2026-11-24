@@ -58,6 +58,25 @@ a payment app. For iOS, run `flutter create --platforms=ios .` and add the schem
 `myapp` has to match the **Mobile App Return Scheme** on your GetPayIn integration, or the
 payment will work and the app will never hear about it.
 
+## Charging a card it saved
+
+Tick **Save my card for future payments** and the card is vaulted off the same
+authorization. The token itself never reaches the app: PayLink sends it to the integration's
+**Webhook URL** as `card_token.created`, so point that at this server — any path will do,
+it treats everything that is not `/init` or `/charge` as the webhook — and it keeps what
+arrives in `~/.config/getpayin/dev-cards.json`.
+
+The next payment then offers that card on the sheet. Picking it calls `/charge` here, which
+signs `tokens/charge` with the hash token and answers. The payer types nothing and the app
+never sees the token, which is the whole point of a vaulted card.
+
+This server also serves the fields page at `/paylink-fields.html`, pointed at whichever
+PayLink it is configured for, so one tunnel covers the page, the webhook and the charge:
+
+```bash
+ngrok http --url=https://your-reserved-domain 127.0.0.1:8788
+```
+
 ## What to check on the phone
 
 1. The switch shows which surface a build will use before you open anything.

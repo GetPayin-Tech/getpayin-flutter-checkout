@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 // Material moved to package:material_ui after Flutter 3.47, which does not exist in the
@@ -166,6 +167,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
   /// leaves the dev server except as the one field the gear sends it in.
   late final List<String> _trace = _store.lines('trace');
 
+  /// The cards the dev server has been told about, for the sheet to offer.
+  ///
+  /// They come from the server because that is where the token is: a vaulted card is
+  /// charged with the hash token, so the app only ever learns the four digits and hands an
+  /// id back when the payer picks one.
+  List<SavedCard> _cards = const <SavedCard>[];
+
   /// A field that starts on what the last run left in it, and saves what is typed.
   TextEditingController _remembered(String key, String fallback) {
     final controller = TextEditingController(text: _store.text(key, fallback));
@@ -173,6 +181,95 @@ class _CheckoutPageState extends State<CheckoutPage> {
     controller.addListener(() => _store.put(key, controller.text));
 
     return controller;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadCards());
+  }
+
+  /// Asks the dev server which cards it is holding.
+  Future<void> _loadCards() async {
+    try {
+      final answer = await http
+          .get(Uri.parse('${_server.text.trim()}/cards'))
+          .timeout(const Duration(seconds: 10));
+
+      final body = jsonDecode(answer.body) as Map<String, Object?>;
+      final cards = (body['cards'] as List<Object?>? ?? <Object?>[])
+          .whereType<Map<String, Object?>>()
+          .map(_cardFrom)
+          .toList();
+
+      if (mounted) {
+        setState(() => _cards = cards);
+      }
+    } catch (_) {
+      return;
+    }
+  }
+
+  /// One saved card, as the sheet wants it.
+  SavedCard _cardFrom(Map<String, Object?> stored) {
+    return SavedCard(
+      id: '${stored['card_token']}',
+      last4: '${stored['last4'] ?? ''}',
+      brand: _brandFrom('${stored['brand'] ?? ''}'),
+      expiryMonth: int.tryParse('${stored['expiry_month'] ?? ''}'),
+      expiryYear: int.tryParse('${stored['expiry_year'] ?? ''}'),
+    );
+  }
+
+  /// The network PayLink named, as the sheet's own enum.
+  CardBrand _brandFrom(String named) {
+    final wanted = named.toLowerCase();
+
+    for (final brand in CardBrand.values) {
+      if (brand.name.toLowerCase() == wanted) {
+        return brand;
+      }
+    }
+
+    return CardBrand.unknown;
+  }
+
+  /// Charges a card the payer picked, which only the server can do.
+  Future<CheckoutResult> _chargeSaved(SavedCard card) async {
+    _say('charging saved card ${card.last4}');
+
+    final answer = await http.post(
+      Uri.parse('${_server.text.trim()}/charge'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, Object?>{
+        'card_token': card.id,
+        'amount': _amount.text.trim(),
+        'currency': _currency,
+        'title': _title.text.trim(),
+        if (_baseUrl.text.trim().isNotEmpty) 'base_url': _baseUrl.text.trim(),
+        if (_publicToken.text.trim().isNotEmpty)
+          'public_token': _publicToken.text.trim(),
+        if (_hashToken.text.trim().isNotEmpty)
+          'hash_token': _hashToken.text.trim(),
+      }),
+    );
+
+    final body = jsonDecode(answer.body) as Map<String, Object?>;
+
+    _say('charge answered ${answer.statusCode}: '
+        '${body['message'] ?? body['error'] ?? body['success']}');
+
+    if (answer.statusCode >= 300) {
+      return CheckoutResult(
+        status: CheckoutStatus.notPaid,
+        message: '${body['error'] ?? 'The saved card could not be charged.'}',
+      );
+    }
+
+    return CheckoutResult(
+      status: CheckoutStatus.paid,
+      message: '${body['message'] ?? 'Charged the saved card.'}',
+    );
   }
 
   @override
@@ -292,6 +389,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _failure = '$error';
     } finally {
       _rememberTrace();
+      unawaited(_loadCards());
 
       if (mounted) {
         setState(() {
@@ -312,6 +410,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageHeaders: fieldsPageHeaders,
         style: sheetStyle,
         collectBillingAddress: _collectBilling,
+        savedCards: _cards,
+        chargeSavedCard: _chargeSaved,
         onDiagnostic: (note) => _say('page: $note'),
         onHandover: (error) {
           _say('handover: ${error.failure.name}  ${error.message ?? ''}');
