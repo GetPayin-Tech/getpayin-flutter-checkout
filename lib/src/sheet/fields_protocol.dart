@@ -234,6 +234,42 @@ CheckoutResult resultFromPayment(FieldsPayment payment,
   );
 }
 
+/// One line saying what the page reported, for a diagnostic someone will paste somewhere.
+///
+/// It says what happened and never what was typed. The card number and the security code
+/// are the gateway's and never reach this side at all, but the name on the card does, and a
+/// trace carrying a payer's name is one nobody can safely send anywhere. A failure is the
+/// exception: its message is the whole reason the line exists, especially for a code this
+/// package does not recognise.
+String describeFieldsEvent(FieldsEvent event) {
+  return switch (event) {
+    FieldsReady(:final amountMinor, :final currency) =>
+      'ready $amountMinor $currency',
+    FieldsChanged(:final field, :final valid, :final empty) =>
+      'change $field ${empty ? 'empty' : (valid ? 'valid' : 'incomplete')}',
+    FieldsAuthenticating(:final stage) => 'authenticating $stage',
+    FieldsCharging() => 'charging',
+    FieldsPayment(
+      :final success,
+      :final message,
+      :final reasonCode,
+      :final invoiceId,
+      :final paidStatus,
+    ) =>
+      'payment ${success ? 'approved' : 'declined'}'
+          '${reasonCode == null ? '' : ' $reasonCode'}'
+          '${invoiceId == null ? '' : ' invoice $invoiceId'}'
+          '${paidStatus == null ? '' : ' $paidStatus'}'
+          '${message == null ? '' : ': $message'}',
+    FieldsError(:final failure, :final message) =>
+      'error ${failure.wireName}${message == null ? '' : ': $message'}',
+    FieldsWalletReady(:final paymentTypes) =>
+      'wallet ready ${paymentTypes.join(',')}',
+    FieldsWalletError(:final message) =>
+      'wallet error${message == null ? '' : ': $message'}',
+  };
+}
+
 /// The JavaScript that starts the fields, sent once the page has loaded.
 ///
 /// The client token is handed over this way rather than in the page's URL: a URL reaches

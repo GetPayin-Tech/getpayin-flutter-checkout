@@ -32,6 +32,7 @@ export 'src/sheet/fields_page.dart'
     show buildFieldsPageHtml, fieldsChannelName, walletPageUrl;
 export 'src/sheet/fields_protocol.dart'
     show
+        describeFieldsEvent,
         FieldsAuthenticating,
         FieldsCharging,
         FieldsChanged,

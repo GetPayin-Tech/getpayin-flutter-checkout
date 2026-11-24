@@ -246,4 +246,88 @@ void main() {
       );
     });
   });
+
+  /*
+   * A line per event, for the diagnostic a tester pastes into a report. It says what
+   * happened and never what was typed: the name on the card is the payer's, and a trace
+   * that carries it is a trace nobody can safely send anywhere.
+   */
+  group('describeFieldsEvent', () {
+    test('says what the box reported, and what it is worth', () {
+      expect(
+        describeFieldsEvent(
+          const FieldsReady(amountMinor: 9742, currency: 'USD'),
+        ),
+        'ready 9742 USD',
+      );
+      expect(
+        describeFieldsEvent(const FieldsCharging()),
+        'charging',
+      );
+      expect(
+        describeFieldsEvent(const FieldsAuthenticating(stage: 'challenge')),
+        'authenticating challenge',
+      );
+    });
+
+    test('names a field without repeating it back', () {
+      final line = describeFieldsEvent(
+        const FieldsChanged(
+          field: 'name',
+          valid: true,
+          empty: false,
+          couldBeValid: true,
+          value: 'Ada Lovelace',
+        ),
+      );
+
+      expect(line, 'change name valid');
+      expect(line, isNot(contains('Ada')));
+    });
+
+    test('carries a failure in full, which is the one thing worth having', () {
+      expect(
+        describeFieldsEvent(
+          const FieldsError(
+            failure: FieldsFailure.originNotAllowed,
+            message: 'The card fields page is not served from the origin.',
+          ),
+        ),
+        'error origin_not_allowed: The card fields page is not served from the origin.',
+      );
+    });
+
+    test('says what the wallet did, which the card box never reports', () {
+      expect(
+        describeFieldsEvent(
+          const FieldsWalletReady(<String>['GOOGLEPAY']),
+        ),
+        'wallet ready GOOGLEPAY',
+      );
+      expect(
+        describeFieldsEvent(const FieldsWalletError(message: 'No wallet.')),
+        'wallet error: No wallet.',
+      );
+      expect(
+        describeFieldsEvent(const FieldsWalletError()),
+        'wallet error',
+      );
+    });
+
+    test('says how a charge answered', () {
+      expect(
+        describeFieldsEvent(
+          const FieldsPayment(
+            success: false,
+            message: 'Declined.',
+            reasonCode: '201',
+            invoiceId: 90210,
+            paidStatus: 'UNPAID',
+            returnUrl: 'myapp://payment-return?success=0',
+          ),
+        ),
+        'payment declined 201 invoice 90210 UNPAID: Declined.',
+      );
+    });
+  });
 }

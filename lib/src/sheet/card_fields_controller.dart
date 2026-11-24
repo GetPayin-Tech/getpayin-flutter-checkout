@@ -32,6 +32,7 @@ class CardFieldsController extends ChangeNotifier {
     this.style = const PaymentSheetStyle(),
     this.onPayment,
     this.onFailure,
+    this.onEvent,
   }) {
     _webView = _build();
   }
@@ -77,6 +78,12 @@ class CardFieldsController extends ChangeNotifier {
 
   /// Called when the attempt could not be completed.
   final void Function(FieldsError error)? onFailure;
+
+  /// Called with every event the page reports, for a sheet keeping a diagnostic.
+  ///
+  /// Separate from the two above because they are how the sheet works and this is only how
+  /// it is watched: a listener here changes nothing and misses nothing.
+  final void Function(FieldsEvent event)? onEvent;
 
   late final WebViewController _webView;
 
@@ -212,6 +219,8 @@ class CardFieldsController extends ChangeNotifier {
     if (event == null || _disposed) {
       return;
     }
+
+    onEvent?.call(event);
 
     if (event is FieldsError) {
       _fail(event);

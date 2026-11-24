@@ -3,6 +3,7 @@ import 'dart:convert';
 // Material moved to package:material_ui after Flutter 3.47, which does not exist in the
 // older versions this package still supports.
 // ignore: deprecated_member_use
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
@@ -230,15 +231,33 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
     _say('pay $_priced  sheet=$_useSheet  billing=$_collectBilling  '
         'keepCard=$_keepCard  googlePayInApp=$_googlePayInApp');
-    _say('opens in: $_presentation');
+    _say('platform ${defaultTargetPlatform.name}  opens in: $_presentation');
+    _say('server: ${_server.text.trim()}');
+    _say(
+        'base url: ${_baseUrl.text.trim().isEmpty ? "the server's own" : _baseUrl.text.trim()}');
+    _say('tokens overridden: '
+        'public=${_publicToken.text.trim().isNotEmpty} '
+        'hash=${_hashToken.text.trim().isNotEmpty}');
 
-    if (_baseUrl.text.trim().isNotEmpty) {
-      _say('base url override: ${_baseUrl.text.trim()}');
+    if (_useSheet) {
+      _say('fields page: ${_fieldsPage.text.trim()}');
     }
 
     try {
       final payment = await _createPayment();
       final session = PayLinkFieldsSession.fromInit(payment.data);
+
+      if (session == null) {
+        _say('session: none in the init answer');
+      } else {
+        _say('session: origin ${session.origin}');
+        _say('session: sdk ${session.sdkUrl}');
+        _say('session: invoice ${session.invoiceId}  '
+            'token ${session.clientToken.length} chars  '
+            'expires ${session.expiresAt ?? "unstated"}');
+        _say('session: page served from the origin? '
+            '${session.servesFrom(_fieldsPage.text.trim())}');
+      }
 
       setState(() => _step = 'Waiting for the payer…');
 
@@ -285,6 +304,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageHeaders: fieldsPageHeaders,
         style: sheetStyle,
         collectBillingAddress: _collectBilling,
+        onDiagnostic: (note) => setState(() => _say('page: $note')),
         onHandover: (error) {
           _say('handover: ${error.failure.name}  ${error.message ?? ''}');
           setState(

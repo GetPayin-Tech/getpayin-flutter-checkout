@@ -36,6 +36,7 @@ class PaymentSheetConfiguration {
     this.billingCountry = 'EG',
     this.successPause = const Duration(milliseconds: 1200),
     this.onHandover,
+    this.onDiagnostic,
     this.keepTheCard = false,
     this.expectedInvoiceId,
     this.amountLabel,
@@ -88,6 +89,13 @@ class PaymentSheetConfiguration {
   /// Your company has to have card tokenization enabled, and the charge carries the
   /// agreement with it. Nothing is kept without the payer ticking it.
   final bool keepTheCard;
+
+  /// Called with a line for everything the card box reports, when you want to watch it.
+  ///
+  /// For a diagnostic a tester can paste into a report, nothing more: it changes nothing
+  /// about the payment and is never required. The lines say what happened and never what
+  /// was typed.
+  final void Function(String note)? onDiagnostic;
 
   /// Called when the sheet gives up and hands the payer to the hosted checkout.
   ///
@@ -250,6 +258,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     style: _config.style,
     onPayment: _onPayment,
     onFailure: _onFieldsFailure,
+    onEvent: _report,
   );
 
   late final BillingFieldSet _billing =
@@ -277,6 +286,10 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   }
 
   void _onCardChanged() => setState(() {});
+
+  /// Passes one page event on to whoever is watching, as a line.
+  void _report(FieldsEvent event) =>
+      _config.onDiagnostic?.call(describeFieldsEvent(event));
 
   void _onPayment(FieldsPayment payment) {
     _settle(resultFromPayment(payment,
