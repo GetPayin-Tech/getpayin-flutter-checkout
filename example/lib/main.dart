@@ -92,6 +92,13 @@ const PaymentSheetStyle sheetStyle = PaymentSheetStyle(
 /// What the page is drawn on, behind the cards.
 const Color canvas = Color(0xFFF1F5F4);
 
+/// The wording a payer agrees to before their card is kept.
+///
+/// One constant, shown to the payer and sent to PayLink as `tokenization_consent_text`, so
+/// the words stored against the card are the words that were on screen. Two copies of this
+/// is how an integrator ends up unable to evidence what was actually agreed to.
+const String cardSaveConsent = 'Save my card for future payments.';
+
 /// The currencies the demo offers, which is what the integration is set up for.
 const List<String> currencies = <String>['EGP', 'EUR', 'USD'];
 
@@ -134,7 +141,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _googlePayInApp = false;
   bool _useSheet = false;
   bool _collectBilling = false;
-  bool _tokenize = false;
+  bool _keepCard = false;
   bool _busy = false;
   String? _step;
   CheckoutResult? _result;
@@ -202,7 +209,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageHeaders: fieldsPageHeaders,
         style: sheetStyle,
         collectBillingAddress: _collectBilling,
-        keepTheCard: _tokenize,
         returnUrl: returnUrl,
         expectedInvoiceId: session.invoiceId,
         amountLabel: _priced,
@@ -273,7 +279,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'currency': _currency,
         'title': _title.text.trim(),
         'hosted_fields': _useSheet,
-        'tokenize': _tokenize,
+        'tokenize': _keepCard,
+        if (_keepCard) 'tokenization_consent_text': cardSaveConsent,
         if (_baseUrl.text.trim().isNotEmpty) 'base_url': _baseUrl.text.trim(),
         if (_publicToken.text.trim().isNotEmpty)
           'public_token': _publicToken.text.trim(),
@@ -454,6 +461,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 enabled: !_busy,
                 onChanged: (chosen) => setState(() => _currency = chosen),
               ),
+              _Consent(
+                text: cardSaveConsent,
+                value: _keepCard,
+                enabled: !_busy,
+                onChanged: (value) => setState(() => _keepCard = value),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -475,14 +488,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   value: _collectBilling,
                   enabled: !_busy,
                   onChanged: (value) => setState(() => _collectBilling = value),
-                ),
-                _Toggle(
-                  title: 'Keep the card',
-                  detail: 'Vault it while charging it, so it can be charged '
-                      'again later.',
-                  value: _tokenize,
-                  enabled: !_busy,
-                  onChanged: (value) => setState(() => _tokenize = value),
                 ),
               ],
               _Toggle(
@@ -769,6 +774,60 @@ class _Segmented extends StatelessWidget {
                   ),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The tick a payer gives before their card is kept, in the words they are given.
+///
+/// On the order screen rather than on the payment sheet, because PayLink is told the payer
+/// agreed when the payment is created -- and a tick collected after that would be asserting
+/// something that had already been asserted.
+class _Consent extends StatelessWidget {
+  const _Consent({
+    required this.text,
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String text;
+  final bool value;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GestureDetector(
+        onTap: enabled ? () => onChanged(!value) : null,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Checkbox(
+                value: value,
+                activeColor: brand,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                onChanged:
+                    enabled ? (ticked) => onChanged(ticked ?? false) : null,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(fontSize: 15, color: Color(0xFF42434E)),
+              ),
+            ),
           ],
         ),
       ),

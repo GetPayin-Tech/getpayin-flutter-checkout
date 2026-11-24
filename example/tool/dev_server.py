@@ -99,6 +99,7 @@ def create_payment(
     first_name: str = "Test",
     last_name: str = "Payer",
     email: str = "test.payer@example.com",
+    consent_text: str = "",
 ) -> dict:
     """Creates one payment and hands back the whole of what `/init` answered.
 
@@ -125,6 +126,12 @@ def create_payment(
 
     if tokenize:
         payload["tokenize"] = True
+
+    # Required with mode "fields": on the integrator's own form there is no consent box of
+    # PayLink's, so the wording shown is what gets stored and relied on in a dispute. Like
+    # `tokenize`, it is outside the signature.
+    if consent_text:
+        payload["tokenization_consent_text"] = consent_text
 
     payload["token"] = config["GETPAYIN_PUBLIC_TOKEN"]
     payload["signature"] = sign(payload, config["GETPAYIN_HASH_TOKEN"])
@@ -160,6 +167,7 @@ def create_payment(
                 first_name=first_name,
                 last_name=last_name,
                 email=email,
+                consent_text=consent_text,
             )
             plain["fields_error"] = refusal
 
@@ -178,7 +186,10 @@ FALLS_BACK_TO_CHECKOUT = {
     "fields_unavailable",
     "fields_unsupported",
     "origin_missing",
+    # Until PAYL-2089 is deployed, keeping a card on hosted fields is refused outright.
+    # After it, the refusal only arrives when the consent wording was left out.
     "tokenize_unavailable_on_fields",
+    "tokenize_consent_required",
 }
 
 
@@ -240,6 +251,7 @@ class Handler(BaseHTTPRequestHandler):
                 first_name=str(asked.get("first_name") or "Test"),
                 last_name=str(asked.get("last_name") or "Payer"),
                 email=str(asked.get("email") or "test.payer@example.com"),
+                consent_text=str(asked.get("tokenization_consent_text") or ""),
             )
         except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
             self._send(502, {"error": str(failure)})

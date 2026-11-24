@@ -150,25 +150,47 @@ Three things are worth knowing before you switch it on:
 
 ## Keeping the card
 
-The card networks require the payer's explicit agreement before a card is kept on file, and
-whoever showed the words is the only party that can evidence what was agreed to. So the
-agreement is **PayLink's SDK's to draw**: the sheet gives it a row in the card box and
-refuses to charge until it is ticked, but the wording is not yours or ours to write.
+A fields payment can vault the payer's card as well as charging it, off the same
+authorization — no second hold and no second visit. It needs one thing beyond
+`tokenize: true`, and the reason is worth understanding before you build it.
 
-```dart
-PaymentSheetConfiguration(
-  keepTheCard: true,
-  // ...
-)
+The card networks require explicit cardholder agreement before a card is kept on file, and
+PayLink has to be able to evidence what was agreed to. On its own checkout it renders that
+box itself. On your page there is nothing of PayLink's to show, so **you send the exact
+wording you showed**, and that is what is stored and relied on in a dispute:
+
+```json
+{
+  "mode": "fields",
+  "tokenize": true,
+  "tokenization_consent_text": "Save my card for future payments."
+}
 ```
 
-The charge then carries the agreement with it — what was shown, and when it was accepted.
-Nothing is kept if the payer leaves the row alone: the pay button simply stays off.
+Leave it out and `/init` refuses with `422 tokenize_consent_required`, naming the field and
+pointing you at `checkout_url` instead. Like `tokenize`, the field sits outside the
+signature, so adopting it changes nothing about the string you sign.
 
-Your company needs card tokenization enabled. Where it is not, or where PayLink declines to
-keep a card from an integrator's own form, `/init` says so and the payer goes to
-`checkout_url` instead — the same fallback the sheet already uses when the fields cannot
-run. See [Saving a card](saving-a-card.md) for the hosted route, which needs no sheet.
+**Ask before you create the payment, not on the sheet.** PayLink is told the payer agreed at
+`/init`, which happens before the sheet opens — so the tick belongs on your own order
+screen, and the wording you show there is the wording you send. Collecting it afterwards
+would be asserting something you had already asserted.
+
+Show the same string in both places from one constant. Two copies is how an integrator ends
+up unable to say what was actually on screen:
+
+```dart
+const String cardSaveConsent = 'Save my card for future payments.';
+```
+
+The token arrives on the `card_token.created` webhook once the payment is approved, and a
+run that ends without one raises `card_token.failed` rather than leaving you waiting. Charge
+it later with `/v2/integration/tokens/charge`, which never leaves your app.
+
+`PaymentSheetConfiguration.keepTheCard` draws a consent row inside the card box instead,
+rendered by PayLink's own SDK. That is the stronger arrangement — the wording is PayLink's
+and the tick is captured first-hand — but it needs an SDK release that carries it, so until
+then the order-screen consent above is the path that works.
 
 ## Wallets
 
