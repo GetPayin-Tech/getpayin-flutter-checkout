@@ -316,7 +316,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   static const CheckoutResult _unfinishedChallenge = CheckoutResult(
     status: CheckoutStatus.notPaid,
     code: CheckoutResultCode.outcomeUnknown,
-    message: 'The bank step was closed before it finished. Read the invoice before '
+    message:
+        'The bank step was closed before it finished. Read the invoice before '
         'charging again.',
   );
 
@@ -1280,9 +1281,7 @@ class _VaultedCard extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        border: last
-            ? null
-            : const Border(bottom: BorderSide(color: hairline)),
+        border: last ? null : const Border(bottom: BorderSide(color: hairline)),
       ),
       child: Row(
         children: <Widget>[
@@ -1701,8 +1700,7 @@ class _DebugPage extends StatelessWidget {
               ),
             ),
           IconButton(
-            onPressed:
-                lines.isEmpty ? null : () => unawaited(_clear(context)),
+            onPressed: lines.isEmpty ? null : () => unawaited(_clear(context)),
             icon: const Icon(Icons.delete_outline_rounded),
             tooltip: 'Clear',
           ),
