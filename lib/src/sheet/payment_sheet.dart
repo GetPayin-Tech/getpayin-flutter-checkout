@@ -246,11 +246,14 @@ class _Fallback extends _SheetOutcome {
 
 enum _Screen { methods, selectCard, newCard, done }
 
-/// How tall the card box grows for a 3-D Secure challenge, where there is room for it.
+/// The share of the screen a 3-D Secure challenge is given, where there is room for it.
 ///
 /// The issuer's page is a page, not a row: it carries its own instructions, a one-time code
-/// field and a submit button, and a box sized for a card number would scroll all three.
-const double _challengeHeight = 480;
+/// field and a submit button, and a box sized for a card number scrolls all three. It is a
+/// share rather than a number of points because the page is formatted by the issuer for the
+/// window it is given, and a fixed box leaves a tall phone mostly empty while cropping the
+/// page on a short one.
+const double _challengeShareOfScreen = 0.85;
 
 /// What the sheet spends on itself around the challenge: its own padding and the safe area.
 const double _sheetChrome = 48;
@@ -517,7 +520,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxHeight: _tallestIn(context)),
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  padding: _contentPadding,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -530,6 +533,17 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         ),
       ),
     );
+  }
+
+  /// The space around what the sheet is showing, which the challenge does not get.
+  ///
+  /// Everything else on the sheet is drawn by this package and is padded like the rest of
+  /// it. The challenge is the issuer's own page, framed by the SDK, and every point taken
+  /// off its width is taken off a page formatted for a window it was told about.
+  EdgeInsets get _contentPadding {
+    return _card.isAuthenticating
+        ? const EdgeInsets.fromLTRB(0, 8, 0, 0)
+        : const EdgeInsets.fromLTRB(16, 8, 16, 16);
   }
 
   List<Widget> _screenContent(BuildContext context) {
@@ -662,13 +676,14 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// How tall the challenge can be drawn without pushing the sheet off the screen.
   ///
   /// The issuer's page asks for a code, so the keyboard comes up and takes most of a short
-  /// phone with it. A fixed height would then overflow, and the part of the page that
-  /// scrolled away would be the part with the field in it.
+  /// phone with it. The room left is therefore the ceiling, and the share of the screen is
+  /// what it settles on when there is more room than that.
   double _challengeHeightIn(BuildContext context) {
     final media = MediaQuery.of(context);
     final room = media.size.height - media.viewInsets.bottom - _sheetChrome;
+    final wanted = media.size.height * _challengeShareOfScreen;
 
-    return math.max(math.min(_challengeHeight, room), 0);
+    return math.max(math.min(wanted, room), 0);
   }
 
   /// The last thing the payer sees: that it worked, and what for.

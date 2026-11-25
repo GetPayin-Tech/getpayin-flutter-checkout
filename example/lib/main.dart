@@ -259,6 +259,67 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return CardBrand.unknown;
   }
 
+  /// Puts the issuer's challenge in a sheet of the app's own, and settles on what it says.
+  ///
+  /// `GetPayInCheckout.open` cannot raise this one: it takes the one-checkout-at-a-time
+  /// guard, and the payment sheet is holding that guard for as long as it is open — so a
+  /// step-up asked for from inside `chargeSavedCard` would be refused as busy, which is
+  /// the rule blocking the second leg of the checkout it belongs to.
+  ///
+  /// `GetPayInCheckoutView` is a widget rather than a session: it claims nothing, reads
+  /// the return link with the same rules the hosted checkout does, and can therefore be
+  /// drawn inside a checkout that is already running. The sheet it sits in is the app's,
+  /// which is why this file owns the chrome and the way out.
+  Future<CheckoutResult> _confirmWithIssuer(
+    String challenge,
+    Object? invoiceId,
+  ) async {
+    final answer = await showModalBottomSheet<CheckoutResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheet) => FractionallySizedBox(
+        heightFactor: 0.94,
+        child: Column(
+          children: <Widget>[
+            _ChallengeBar(onClose: () => Navigator.of(sheet).pop()),
+            Expanded(
+              child: GetPayInCheckoutView(
+                checkoutUrl: challenge,
+                returnUrl: returnUrl,
+                expectedInvoiceId: invoiceId,
+                onComplete: (result) => Navigator.of(sheet).pop(result),
+                onLoadError: (message, detail) =>
+                    _say('challenge could not load: $message'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    _say('challenge ${answer == null ? 'closed' : answer.status.name}');
+
+    return answer ?? _unfinishedChallenge;
+  }
+
+  /// What a challenge the payer walked away from means.
+  ///
+  /// Not cancelled: the charge is with the gateway by the time an issuer asks anything, so
+  /// the one thing this is not is a payment that never happened.
+  static const CheckoutResult _unfinishedChallenge = CheckoutResult(
+    status: CheckoutStatus.notPaid,
+    code: CheckoutResultCode.outcomeUnknown,
+    message: 'The bank step was closed before it finished. Read the invoice before '
+        'charging again.',
+  );
+
   /// Takes a vaulted card out of use, which only the server can do.
   ///
   /// A payer removing a saved card is `POST /api/v2/integration/tokens/revoke`, signed
@@ -378,14 +439,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     if (body['challenge_url'] case final String challenge) {
       _say('issuer wants the payer: $challenge');
 
-      return GetPayInCheckout.open(
-        challenge,
-        OpenCheckoutOptions(
-          returnUrl: returnUrl,
-          expectedInvoiceId: body['invoice_id'],
-          title: _title.text.trim(),
-        ),
-      );
+      return _confirmWithIssuer(challenge, body['invoice_id']);
     }
 
     if (answer.statusCode >= 300) {
@@ -1067,6 +1121,48 @@ class _Card extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
+      ),
+    );
+  }
+}
+
+/// The bar over the issuer's page, which is the only chrome it gets.
+///
+/// A way out is not optional: the challenge is the issuer's page, it can fail to load or
+/// hang on a network nobody controls, and a sheet with no close button would strand the
+/// payer on it with a charge already out.
+class _ChallengeBar extends StatelessWidget {
+  const _ChallengeBar({required this.onClose});
+
+  /// Called when the payer gives up on the bank.
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: hairline)),
+      ),
+      child: Row(
+        children: <Widget>[
+          const Expanded(
+            child: Text(
+              'Your bank',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF30313D),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onClose,
+            icon: const Icon(Icons.close_rounded),
+            color: muted,
+            tooltip: 'Close',
+          ),
+        ],
       ),
     );
   }
