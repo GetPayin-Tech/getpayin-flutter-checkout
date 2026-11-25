@@ -387,11 +387,12 @@ void main() {
     expect(find.text(r'Pay $97.42'), findsNothing);
 
     final box = tester.getSize(find.byType(CardBox));
+    final sheet = tester.getSize(find.byType(GetPayInPaymentSheet));
     final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
 
     expect(
       box.width,
-      screen.width,
+      sheet.width,
       reason: 'the issuer formats its page for a window, and every point taken '
           'off the width is taken off the page',
     );
