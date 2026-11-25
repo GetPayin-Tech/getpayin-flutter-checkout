@@ -60,7 +60,10 @@ environment, which is a long way to the answer.
 
 The origin is not a formality: it is baked into the capture context CyberSource issues and
 checked on every call, so a page served from anywhere else renders nothing at all. The sheet
-checks it for you and reports `origin_not_allowed` rather than showing you an empty box.
+checks it for you and reports `origin_not_allowed` rather than showing you an empty box, and
+it keeps checking afterwards: the card box loads your page and no other, whatever the page
+asks for next. What the page frames — the card fields, and the issuer's 3-D Secure step — is
+unaffected.
 
 An origin that will not serve the page to a plain request — a development tunnel with an
 interstitial, a staging host behind a gate — takes `fieldsPageHeaders`, which is sent with

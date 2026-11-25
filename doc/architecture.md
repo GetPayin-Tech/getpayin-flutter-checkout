@@ -115,21 +115,23 @@ different artefacts. What a claim has to survive is decided once, in
 invoice is refused. `resolveReturn` feeds it a link; `resultFromPayment` feeds it a charge.
 If you add a third source, feed it the same function.
 
-## Two deep-link sources, treated differently
+## Two deep-link sources, one rule
 
-`sessions/deep_link.dart` reads the return link from two places, and the asymmetry is the
-point:
+`sessions/deep_link.dart` reads the return link from the two places `app_links` offers, and
+neither is tied to a live checkout:
 
-- The **link stream** is a push. The system delivers each link once, as it happens. A
-  watcher only has to ignore a second copy of its own.
-- The **initial link** is a pull of state that persists. It keeps returning the same link
-  for as long as the activity's intent holds it. Values from it are therefore consumed once
-  per process, and the link the app was _launched_ with is consumed before any checkout can
-  start — the provider primes that as it mounts. It belongs to no session, and letting a
-  later checkout read it would report a payment that never happened.
+- The **link stream** is a push: each link is delivered once, as it happens. But a link that
+  arrives before anything in Dart listens is held and replayed to the first listener.
+- The **initial link** is a pull of state that persists. It answers with the first link the
+  _process_ ever saw, whenever that arrived, and goes on answering with it.
 
-Getting this wrong is not a style question: it is how a forged link that cold-starts the app
-becomes the next checkout's `paid`.
+So the watcher keeps one subscription for the whole process, opened by `prime()` as the
+provider mounts; reads the initial link once, there; and tells a checkout only about links
+that arrive while it is watching. A link that arrives with nothing waiting for it is dropped,
+and refused if it turns up again.
+
+Getting this wrong is not a style question: it is how a link that belongs to nothing becomes
+the next checkout's `paid`.
 
 ## Differences from the Expo package
 

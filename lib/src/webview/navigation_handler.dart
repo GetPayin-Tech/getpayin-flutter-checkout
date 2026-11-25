@@ -14,12 +14,13 @@ class NavigationRequestInfo {
   /// Where the page is asking to go.
   final String url;
 
-  /// Whether the page itself asked, rather than a frame inside it.
+  /// Whether the main frame is the one being navigated, rather than a frame inside it.
   ///
   /// `webview_flutter` reports this as `NavigationRequest.isMainFrame`, and reports it on
   /// both platforms: Android from `WebResourceRequest.isForMainFrame`, iOS from
   /// `WKNavigationAction.targetFrame`. The frame rule therefore holds on both, which is not
-  /// true of every web view library.
+  /// true of every web view library. Both name the frame being navigated rather than the
+  /// one that asked for it, which neither platform reports.
   final bool isTopFrame;
 }
 

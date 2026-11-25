@@ -124,6 +124,22 @@ class FakeWebViewController extends PlatformWebViewController {
     channel.onMessageReceived(JavaScriptMessage(message: message));
   }
 
+  /// Reports a navigation on this controller's own page, and answers what it was told.
+  ///
+  /// Per controller rather than per platform: a sheet has a card box and a wallet surface
+  /// open at once, and each judges its own navigations.
+  Future<NavigationDecision> navigate(String url,
+      {bool isMainFrame = true}) async {
+    final onNavigationRequest = navigation?.onNavigationRequest;
+
+    if (onNavigationRequest == null) {
+      throw StateError('This web view judges no navigations.');
+    }
+
+    return onNavigationRequest(
+        NavigationRequest(url: url, isMainFrame: isMainFrame));
+  }
+
   /// Reports that this controller's own page finished loading.
   void finishLoading() {
     final onPageFinished = navigation?.onPageFinished;

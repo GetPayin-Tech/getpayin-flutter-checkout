@@ -12,42 +12,82 @@ Future<void> flush() async {
   }
 }
 
-/// The two deep-link sources, under the test's control.
+/// The two deep-link sources, modelled on what `app_links` itself does.
 ///
-/// [initial] is a pull of state that persists, as the activity's intent is; [emit] is the
-/// push the system makes when a link arrives while the app is running.
+/// One path covers every link, because the plugin has one: the first link a process ever
+/// sees becomes the initial link and keeps being answered as such however late it arrived,
+/// and a link that arrives before Dart listens is queued and replayed to whoever listens
+/// first. A fake that smoothed either of them over would be standing in for an easier
+/// plugin than the one that ships.
 class FakeDeepLinks {
-  final StreamController<Uri> _links = StreamController<Uri>.broadcast();
+  /// Creates a source nothing has reached yet.
+  FakeDeepLinks() {
+    _links = StreamController<Uri>.broadcast(onListen: _replay);
+  }
 
-  /// What the initial-link reader answers, which it keeps answering until changed.
-  String? initial;
+  late final StreamController<Uri> _links;
+
+  /// Links held until Dart first listens, as the plugin holds them. Null once replayed.
+  List<String>? _queued = <String>[];
+
+  String? _initial;
 
   /// How many times the initial link has been read.
   int initialReads = 0;
 
-  /// How many stream subscriptions are open, so a test can prove a watcher stopped.
-  int get listeners => _links.hasListener ? 1 : 0;
+  /// The link the app was launched with, as the plugin would answer it.
+  String? get initial => _initial;
+
+  /// Whether anything is listening to the link stream.
+  bool get listening => _links.hasListener;
 
   /// The source to hand a [ReturnLinkWatcher].
   DeepLinkSource get source => DeepLinkSource(
         initialLink: () async {
           initialReads += 1;
 
-          final url = initial;
+          final url = _initial;
 
           return url == null ? null : Uri.parse(url);
         },
         links: () => _links.stream,
       );
 
+  /// Opens the app with [url], before anything in Dart is listening for one.
+  void launchedWith(String url) => _arrive(url);
+
   /// Delivers a link the way the system does while the app is running.
-  void emit(String url) => _links.add(Uri.parse(url));
+  void emit(String url) => _arrive(url);
 
   /// Reports a failure on the link stream, as a plugin that loses its channel does.
   void fail(Object error) => _links.addError(error);
 
   /// Closes the stream, for a test that is done with it.
   Future<void> dispose() => _links.close();
+
+  /// One link arriving, by the plugin's own rules.
+  void _arrive(String url) {
+    _initial ??= url;
+
+    if (_links.hasListener) {
+      _links.add(Uri.parse(url));
+
+      return;
+    }
+
+    _queued?.add(url);
+  }
+
+  /// Hands everything that arrived before Dart listened to the first listener.
+  void _replay() {
+    final queued = _queued;
+
+    _queued = null;
+
+    for (final url in queued ?? const <String>[]) {
+      _links.add(Uri.parse(url));
+    }
+  }
 }
 
 /// The phone a browser checkout runs against, under the test's control.

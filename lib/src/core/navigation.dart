@@ -81,12 +81,13 @@ class NavigationContext {
   /// app that answers to nothing but its return link.
   final List<String> ownSchemes;
 
-  /// Whether the navigation was started by the page itself rather than by a frame inside
-  /// it. `webview_flutter` reports it as `isMainFrame` on the request, on both platforms.
+  /// Whether the main frame is the one being navigated, rather than a frame inside it.
+  /// `webview_flutter` reports it as `isMainFrame` on the request, on both platforms.
   ///
-  /// A sub-frame gets nothing but ordinary web navigation: an `<iframe>` on the issuer's
-  /// 3-D Secure page, which knows the real invoice id, could otherwise point itself at the
-  /// return link and end the checkout as paid with no payment made.
+  /// It names the frame being navigated, never the frame that asked, which no web view
+  /// reports. A frame navigating itself gets ordinary web content and nothing else: it does
+  /// not end the checkout, and it does not reach another app. The checkout page is hosted
+  /// by the issuer at the 3-D Secure step, so what it frames is not ours to trust.
   final bool isTopFrame;
 }
 

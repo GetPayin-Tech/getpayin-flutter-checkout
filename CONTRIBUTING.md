@@ -47,7 +47,8 @@ secret:
    as the page around it, and an app screen has none.
 6. A script scheme never reaches the launcher, and neither does one of the app's own
    schemes. `openExternally` hands a URL to the phone and the page is what chose it.
-7. The link the app was launched with never settles a checkout opened afterwards.
+7. A checkout is settled only by a link that arrives while it is watching: not the one the
+   app was launched with, and not the one that settled the checkout before it.
 8. Android's Payment Request switch is set before the page loads, never after.
 
 ## Tests

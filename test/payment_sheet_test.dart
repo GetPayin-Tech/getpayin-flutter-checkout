@@ -271,6 +271,8 @@ void main() {
     await tester.tap(find.text(const PaymentSheetStrings().newCard));
     await pumpFrames(tester);
     await completeTheCard(tester);
+    await tester.tap(find.text(r'Pay $97.42'));
+    await pumpFrames(tester);
 
     postToCard(<String, Object?>{
       'type': 'payment',
@@ -872,6 +874,65 @@ void main() {
       await pumpFrames(tester);
 
       expect(launcher.launches.single.$1, testCheckoutUrl);
+    });
+  });
+
+  /*
+   * The card box talks to one page, over a channel everything that page frames can post on,
+   * and no platform names the sender of a message. So it answers one charge, the one it
+   * asked for, and gives its top frame to the registered origin and nothing else.
+   */
+  group('a message the card box never asked for', () {
+    testWidgets('is not reported as a payment', (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'payment',
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        settled,
+        isNull,
+        reason: 'no charge of the sheet was running, so nobody was paid',
+      );
+      expect(find.text(const PaymentSheetStrings().addNewCard), findsOneWidget);
+    });
+
+    testWidgets('refuses a top-frame page from outside the registered origin',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      expect(
+        await cardBox().navigate('https://elsewhere.example.com/card'),
+        NavigationDecision.prevent,
+      );
+      expect(
+        await cardBox().navigate(testFieldsPageUrl),
+        NavigationDecision.navigate,
+      );
+    });
+
+    testWidgets('lets the gateway and the issuer render their own frames',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      expect(
+        await cardBox()
+            .navigate('https://3ds.issuer.example/step', isMainFrame: false),
+        NavigationDecision.navigate,
+      );
     });
   });
 }

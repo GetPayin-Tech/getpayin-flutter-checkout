@@ -61,21 +61,25 @@ Writing a second copy of one of these is the bug.
    reading a save with the payment rule would call every success a failure. Never add a
    second parser: the strictness that refuses a repeated or ambiguous field has to be the
    same for both, because it is the same signed link.
-3. **The launch link never settles a later checkout.** The initial link is a _pull_ of
-   persistent state and its values are consumed once per process; the link stream is a
-   _push_ and is not deduplicated across sessions. Do not collapse the two: the asymmetry is
-   what stops a forged cold-start link becoming the next checkout's paid result, while still
-   letting a byte-identical link settle a second genuine checkout.
+3. **A checkout only hears links that arrive while it is watching.** Neither source is tied
+   to a live checkout: the initial link answers with the first link the process ever saw,
+   whenever that arrived, and links that arrive before Dart listens are replayed to the
+   first listener. So `ReturnLinkWatcher` holds one subscription for the process, opened by
+   `prime()` as the provider mounts, reads the initial link once there, and drops anything
+   that arrives with nothing waiting for it. Do not move the subscription into `watch()`,
+   and do not read the initial link there: both are how a link that belongs to nothing ends
+   up settling the next payment.
 4. **`expectedInvoiceId` downgrades only a paid result.** Rewriting a `notPaid` or
    `cancelled` would lose the reason the payer was given.
 5. **A script scheme, any scheme the app answers to, and anything with no part in paying
    never reach the launcher.** `classifyNavigation` returns `block` for all three. The app's
    schemes come from `declareHostAppSchemes`, because Flutter has no app config to read.
-6. **A frame inside the checkout page can only ever load.** `isTopFrame` is required, never
-   defaulted: a 3-D Secure page knows the real invoice id, so an `<iframe>` aimed at the
-   return link would report a payment nobody made, and `expectedInvoiceId` is no defence.
+6. **A frame navigating itself can only ever load.** `isTopFrame` is required, never
+   defaulted: a 3-D Secure page knows the real invoice id, so a frame aimed at the return
+   link would report a payment nobody made, and `expectedInvoiceId` is no defence.
    `webview_flutter` reports `isMainFrame` on both platforms, so unlike the Expo package the
-   rule holds on Android too. Keep it that way.
+   rule holds on Android too. Keep it that way — and keep what is written about it exact: it
+   names the frame being navigated, not the frame that asked, which no web view reports.
 7. **No script on a surface that can show a wallet.** WebKit turns Apple Pay off on any page
    the host app has scripted. The hosted checkout view and `WalletSurface` register no
    channel and never run JavaScript; `WalletSurface` answers by navigating to the return
@@ -97,6 +101,11 @@ Writing a second copy of one of these is the bug.
     page to load and fields to mount; lazily built, none of that starts until it is too late.
 14. **A fatal fields failure closes the sheet after the frame, never during it.** A route
     cannot be popped while it is being built.
+15. **The card box answers one charge: its own.** Its channel is shared with everything the
+    page frames and neither platform names the sender, so a `payment` arriving while no
+    charge of the box's is running is ignored, and only a page from the registered origin
+    may hold its top frame. A frame may still load: the gateway's fields and the issuer's
+    step are rendered that way.
 
 ## House style
 
