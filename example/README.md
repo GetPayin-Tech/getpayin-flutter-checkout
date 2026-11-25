@@ -115,6 +115,11 @@ The challenge runs over the tunnel rather than this server's LAN address. A bank
 HTTPS and posts its answer back to the return URL, and no browser will carry that answer
 down to plain HTTP.
 
+The finished challenge is handed back as a return link, by default this app's own
+`myapp://payment-return`. An app of your own driving this server sends `return_url` on the
+charge and is sent back to its own scheme instead, because a link to an app the phone does
+not have goes nowhere at all.
+
 This server also serves the fields page at `/paylink-fields.html`, pointed at whichever
 PayLink it is configured for, so one tunnel covers the page, the webhook and the charge:
 
