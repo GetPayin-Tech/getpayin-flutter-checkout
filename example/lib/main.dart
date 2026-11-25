@@ -234,6 +234,48 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return CardBrand.unknown;
   }
 
+  /// Takes a vaulted card out of use, which only the server can do.
+  ///
+  /// A payer removing a saved card is `POST /api/v2/integration/tokens/revoke`, signed
+  /// with the hash token, so it goes the same way a charge does: the app knows four digits
+  /// and an id, and the server knows the token. The list is read again afterwards rather
+  /// than edited here, so what the screen shows is what the server still holds.
+  Future<void> _revokeSaved(SavedCard card) async {
+    setState(() => _busy = true);
+    _say('revoking saved card ${card.last4}');
+
+    try {
+      final answer = await http
+          .post(
+            Uri.parse('${_server.text.trim()}/revoke'),
+            headers: const <String, String>{'Content-Type': 'application/json'},
+            body: jsonEncode(<String, Object?>{
+              'card_token': card.id,
+              if (_baseUrl.text.trim().isNotEmpty)
+                'base_url': _baseUrl.text.trim(),
+              if (_publicToken.text.trim().isNotEmpty)
+                'public_token': _publicToken.text.trim(),
+              if (_hashToken.text.trim().isNotEmpty)
+                'hash_token': _hashToken.text.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      final body = jsonDecode(answer.body) as Map<String, Object?>;
+
+      _say('revoke answered ${answer.statusCode}: '
+          '${body['message'] ?? body['error'] ?? body['success']}');
+    } catch (failure) {
+      _say('revoke failed: $failure');
+    }
+
+    await _loadCards();
+
+    if (mounted) {
+      setState(() => _busy = false);
+    }
+  }
+
   /// Charges a card the payer picked, which only the server can do.
   Future<CheckoutResult> _chargeSaved(SavedCard card) async {
     _say('charging saved card ${card.last4}');
@@ -831,6 +873,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 ),
             ],
           ),
+          if (_cards.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 16),
+            _Card(
+              children: <Widget>[
+                const _Label('Vaulted cards'),
+                for (final card in _cards)
+                  _VaultedCard(
+                    card: card,
+                    enabled: !_busy,
+                    onRevoke: () => unawaited(_revokeSaved(card)),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 20),
           SizedBox(
             height: 56,
@@ -936,6 +992,49 @@ class _Card extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
+      ),
+    );
+  }
+}
+
+/// One vaulted card, with the only thing an app can ask to have done to it.
+///
+/// Charging it is the sheet's job and happens there; removing it is not a payment and has
+/// nowhere else to live, so it sits on the screen that lists them.
+class _VaultedCard extends StatelessWidget {
+  const _VaultedCard({
+    required this.card,
+    required this.enabled,
+    required this.onRevoke,
+  });
+
+  /// The card, as the server reported it.
+  final SavedCard card;
+
+  /// False while something else is running, so two calls cannot overlap.
+  final bool enabled;
+
+  /// Called when the payer asks for it to be removed.
+  final VoidCallback onRevoke;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              '${card.brand.label} ••••${card.last4}'
+              '${card.hasExpired ? ' — expired' : ''}',
+              style: const TextStyle(fontSize: 15, color: Color(0xFF30313D)),
+            ),
+          ),
+          TextButton(
+            onPressed: enabled ? onRevoke : null,
+            child: const Text('Remove'),
+          ),
+        ],
       ),
     );
   }
