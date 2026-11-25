@@ -42,6 +42,16 @@ card that may already have been charged.
 
 ### Changed
 
+- A checkout is settled only by a return link that arrives while it is watching. The package
+  listens for deep links once, as `GetPayInProvider` mounts, and a link that reaches the app
+  with no checkout waiting for one is dropped. Neither source `app_links` offers is tied to a
+  live checkout — the initial link answers with the first link the process ever saw, whenever
+  that arrived, and links that arrive before Dart listens are replayed to whoever listens
+  first — so the ordering is decided here rather than taken from it.
+- The payment sheet's card box reports a payment only while it is waiting for the answer to
+  a charge it started, and gives its top frame to your registered origin and nothing else.
+  What the page frames is unchanged: the gateway renders the card number and the security
+  code that way, and the SDK frames the issuer's 3-D Secure step there too.
 - `doc/taking-payments.md` no longer says a `cancelled` checkout means the payer did not
   pay. It is what the package reports whenever no trustworthy answer arrived, and a payment
   can go through with no answer arriving.

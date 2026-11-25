@@ -5,13 +5,14 @@ import 'support/fakes.dart';
 import 'support/fixtures.dart';
 
 /*
- * The app's return scheme is public: any web page, message or other app on the phone can
- * invoke it. A link planted that way cold-starts the app, and the initial-link reader keeps
- * returning it for the life of the process. If a later checkout were allowed to read it,
- * the package would report that checkout as paid, with an invoice id the attacker chose.
+ * A checkout is only ever told about links that arrive while it is watching. Neither source
+ * `app_links` offers is tied to a live checkout: the initial link answers with the first
+ * link the process ever saw, whenever that arrived, and links that arrive before Dart
+ * listens are replayed to whoever listens first. So the watcher opens its one subscription
+ * as the app starts, reads the initial link there, and drops anything that arrives with
+ * nothing waiting for it.
  *
- * Each test builds its own watcher, so the launch link is read at the point the test has
- * arranged it, which is what happens on a real launch.
+ * Every test here drives both sources the way the plugin drives them.
  */
 
 void main() {
@@ -22,7 +23,7 @@ void main() {
 
   group('the link the app was launched with', () {
     test('never settles a checkout opened later in the same process', () async {
-      links.initial = returnLink('success=1&invoice_id=INV-ATTACKER');
+      links.launchedWith(returnLink('success=1&invoice_id=INV-ELSEWHERE'));
 
       final watcher = ReturnLinkWatcher(source: links.source);
 
@@ -38,10 +39,31 @@ void main() {
       watching.stop();
     });
 
+    test('is refused however late the stream pushes it', () async {
+      final launch = returnLink('success=1&invoice_id=INV-ELSEWHERE');
+
+      links.launchedWith(launch);
+
+      final watcher = ReturnLinkWatcher(source: links.source);
+
+      await watcher.prime();
+      await flush();
+
+      final matched = <String>[];
+      final watching = watcher.watch(testReturnUrl, matched.add);
+
+      await flush();
+      links.emit(launch);
+      await flush();
+
+      expect(matched, isEmpty);
+      watching.stop();
+    });
+
     test(
         'does not block a genuine link that arrives while the checkout is open',
         () async {
-      links.initial = returnLink('success=1&invoice_id=INV-ATTACKER');
+      links.launchedWith(returnLink('success=1&invoice_id=INV-ELSEWHERE'));
 
       final watcher = ReturnLinkWatcher(source: links.source);
       final matched = <String>[];
@@ -58,25 +80,67 @@ void main() {
       watching.stop();
     });
 
-    test('accepts an intent link that differs from the launch link', () async {
+    test('reads the launch link once however many checkouts run', () async {
+      final watcher = ReturnLinkWatcher(source: links.source);
+
+      await watcher.prime();
+      await watcher.prime();
+
+      final watching = watcher.watch(testReturnUrl, (_) {});
+
+      await flush();
+      watching.stop();
+
+      expect(links.initialReads, 1);
+    });
+  });
+
+  group('a link nobody is waiting for', () {
+    test('does not settle the checkout that comes after it', () async {
       final watcher = ReturnLinkWatcher(source: links.source);
 
       await watcher.prime();
       await flush();
 
-      final recreated = returnLink('success=1&invoice_id=INV-REAL');
+      final declined = returnLink('success=0&invoice_id=INV-FIRST');
+      final first = <String>[];
+      final firstWatch = watcher.watch(testReturnUrl, first.add);
 
-      links.initial = recreated;
+      await flush();
+      links.emit(declined);
+      await flush();
+      firstWatch.stop();
+
+      final second = <String>[];
+      final secondWatch = watcher.watch(testReturnUrl, second.add);
+
+      await flush();
+
+      expect(first, <String>[declined]);
+      expect(second, isEmpty);
+      secondWatch.stop();
+    });
+
+    test('is dropped when it arrives between two checkouts', () async {
+      final watcher = ReturnLinkWatcher(source: links.source);
+
+      await watcher.prime();
+      await flush();
+
+      links.emit(returnLink('success=1&invoice_id=INV-STRAY'));
+      await flush();
 
       final matched = <String>[];
       final watching = watcher.watch(testReturnUrl, matched.add);
 
       await flush();
 
-      expect(matched, <String>[recreated]);
+      expect(matched, isEmpty);
       watching.stop();
     });
+  });
 
+  group('the deep-link watcher', () {
     test('reports a repeated link once per checkout, not once per process',
         () async {
       final watcher = ReturnLinkWatcher(source: links.source);
@@ -102,9 +166,7 @@ void main() {
       expect(first, hasLength(1));
       expect(second, hasLength(1));
     });
-  });
 
-  group('the deep-link watcher', () {
     test('ignores a link that is not the return link', () async {
       final watcher = ReturnLinkWatcher(source: links.source);
       final matched = <String>[];
@@ -131,7 +193,11 @@ void main() {
       await flush();
 
       expect(matched, isEmpty);
-      expect(links.listeners, 0);
+      expect(
+        links.listening,
+        isTrue,
+        reason: 'the one subscription is the process-long one, not a checkout',
+      );
     });
 
     test('carries on when the link stream reports an error', () async {
@@ -150,15 +216,6 @@ void main() {
 
       expect(matched, <String>[genuine]);
       watching.stop();
-    });
-
-    test('reads the launch link once however many checkouts run', () async {
-      final watcher = ReturnLinkWatcher(source: links.source);
-
-      await watcher.prime();
-      await watcher.prime();
-
-      expect(links.initialReads, 1);
     });
 
     test('carries on when the deep-link source cannot answer at all', () async {

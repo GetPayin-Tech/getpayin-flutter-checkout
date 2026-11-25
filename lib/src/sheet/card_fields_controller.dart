@@ -181,7 +181,10 @@ class CardFieldsController extends ChangeNotifier {
         onMessageReceived: (message) => _receive(message.message),
       )
       ..setNavigationDelegate(
-        NavigationDelegate(onPageFinished: (_) => unawaited(_start())),
+        NavigationDelegate(
+          onNavigationRequest: _judge,
+          onPageFinished: (_) => unawaited(_start()),
+        ),
       );
 
     if (!session.servesFrom(pageUrl)) {
@@ -193,6 +196,18 @@ class CardFieldsController extends ChangeNotifier {
     unawaited(controller.loadRequest(Uri.parse(pageUrl), headers: pageHeaders));
 
     return controller;
+  }
+
+  /// Decides what may hold the top frame of the card box: its own page, and nothing else.
+  ///
+  /// The box talks to the page it was given, over a channel that page's own script answers
+  /// on, so the page it was given is the only one that may hold it. A frame is left alone:
+  /// the gateway renders the card number and the security code in its own frames, and the
+  /// SDK frames the issuer's 3-D Secure step here too.
+  NavigationDecision _judge(NavigationRequest request) {
+    final mine = !request.isMainFrame || session.servesFrom(request.url);
+
+    return mine ? NavigationDecision.navigate : NavigationDecision.prevent;
   }
 
   /// Tells the sheet the page is on the wrong origin, once this controller exists.
@@ -233,10 +248,18 @@ class CardFieldsController extends ChangeNotifier {
     );
   }
 
+  /// Whether [event] answers a charge this box never started.
+  ///
+  /// The channel is shared with everything the page frames, and neither platform names the
+  /// sender of a message. So the box reports one payment only: the one it asked for, while
+  /// it is still waiting for the answer.
+  bool _answersNoCharge(FieldsEvent event) =>
+      event is FieldsPayment && !_snapshot.charging;
+
   void _receive(String raw) {
     final event = parseFieldsEvent(raw);
 
-    if (event == null || _disposed) {
+    if (event == null || _disposed || _answersNoCharge(event)) {
       return;
     }
 

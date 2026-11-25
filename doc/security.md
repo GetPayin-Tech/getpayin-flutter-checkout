@@ -33,12 +33,12 @@ So `CheckoutStatus.paid` means "the link said so", not "the money moved".
 1. **An unreadable status is never upgraded.** A link whose status the reader does not
    recognise becomes `notPaid`, with a message saying so. No code path turns absent or
    unknown input into `paid`.
-2. **The launch link never settles a later checkout.** The initial-link reader keeps
-   returning the link that started the app for the whole life of the process. A forged link
-   that cold-starts your app is taken out of circulation before any checkout can read it, so
-   it cannot become the result of the next payment the payer starts. Values pulled from the
-   initial link are consumed once per process for the same reason; links pushed by the
-   stream are not, because the system delivers each of those once as it happens.
+2. **A checkout is settled only by a link that arrives while it is watching.** The package
+   listens for deep links once, as `GetPayInProvider` mounts, and drops every link that
+   reaches the app with no checkout waiting for one. So the link your app was opened with
+   cannot become the result of the next payment the payer starts, and neither can the link
+   that settled the payment before it. Both are links the plugin can still hand back after
+   the fact, which is why the rule lives here rather than in it.
 3. **`expectedInvoiceId` binds the link to the checkout.** With it set, a paid link naming a
    different invoice, or naming none at all, is reported as `notPaid`. **Pass it whenever
    you have it.** Without it the package has nothing to tie the link to.
@@ -60,12 +60,12 @@ they are owed.
 Every navigation goes through the package's own handler, which sorts them into four
 outcomes:
 
-| Outcome          | What happens           | Examples                                                          |
-| ---------------- | ---------------------- | ----------------------------------------------------------------- |
-| `endCheckout`    | The checkout ends.     | your return link, from the page itself                            |
-| `load`           | Stays in the web view. | `https:`, `http:`, `about:`, `data:`, `blob:`, `file:`            |
-| `openExternally` | Handed to the phone.   | a bank app for 3-D Secure, `tel:`, `mailto:`, `intent:`           |
-| `block`          | Refused.               | `javascript:`, your own app's schemes, `market:`, `sms:`, a frame |
+| Outcome          | What happens           | Examples                                                                            |
+| ---------------- | ---------------------- | ----------------------------------------------------------------------------------- |
+| `endCheckout`    | The checkout ends.     | your return link, navigating the whole page                                         |
+| `load`           | Stays in the web view. | `https:`, `http:`, `about:`, `data:`, `blob:`, `file:`                              |
+| `openExternally` | Handed to the phone.   | a bank app for 3-D Secure, `tel:`, `mailto:`, `intent:`                             |
+| `block`          | Refused.               | `javascript:`, your own app's schemes, `market:`, `sms:`, a frame navigating itself |
 
 Three of those deserve explanation.
 
@@ -95,17 +95,20 @@ Because `declareHostAppSchemes` is the only thing standing between a checkout pa
 own deep-link routes, declare all of them. The Expo package reads them from `app.json`; here
 it is a call you make.
 
-**Why a frame inside the page gets less.** A navigation the page did not ask for itself can
-only ever `load` ordinary web content. It never ends the checkout and never reaches another
-app. A 3-D Secure page knows the real invoice id, so an `<iframe>` pointing itself at
-`myapp://payment-return?success=1&invoice_id=<the real one>` would otherwise report a
-payment that was never made, and `expectedInvoiceId` would not catch it, because the invoice
-id is genuine.
+**Why a frame inside the page gets less.** A frame navigating *itself* can only ever `load`
+ordinary web content. It never ends the checkout and never reaches another app. The reason
+is that a 3-D Secure page knows the invoice id it is authenticating, so a frame allowed to
+end the checkout could report a payment that was never made, and `expectedInvoiceId` would
+not catch it, because the invoice id is genuine.
 
-Unlike the Expo package, this holds on **both** platforms: `webview_flutter` reports whether
-a navigation came from the main frame on Android as well as iOS. That is one fewer gap, not
-a reason to trust the app's result: the `invoice.paid` webhook on your server still decides
-whether you deliver.
+The flag the web views report, `isMainFrame`, names the frame **being navigated**, not the
+frame that asked for it — no web view reports the latter. A navigation of the whole page is
+therefore judged as one wherever it came from. That is the limit of the rule, and it is why
+the rule is one layer of several rather than the thing you rely on.
+
+Unlike the Expo package, it holds on **both** platforms: `webview_flutter` reports the flag
+on Android as well as iOS. That is one fewer gap, not a reason to trust the app's result:
+the `invoice.paid` webhook on your server still decides whether you deliver.
 
 The reason this matters: a 3-D Secure page is hosted by the **issuer**, not by GetPayIn. The
 page driving these navigations is not one this package controls.
@@ -138,6 +141,13 @@ to load a page from anywhere else rather than showing an empty box.
 
 **A charge is idempotent per invoice.** PayLink holds it behind a per-payment lock, so a
 double-tapped pay button is refused with `in_progress` rather than charged twice.
+
+**The card box answers one charge: its own.** The box is the one surface the package
+scripts, and the channel its page posts on is shared with everything that page frames — the
+gateway's own fields, and the issuer's 3-D Secure step. Neither platform tells the host
+which frame sent a message. So the sheet reports a payment only while it is waiting for the
+answer to a charge it started, and only your registered origin may hold the box's top frame;
+a frame inside it may still load, because that is how all three are rendered.
 
 ## Saving a card
 
