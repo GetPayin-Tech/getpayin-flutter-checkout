@@ -120,6 +120,12 @@ The finished challenge is handed back as a return link, by default this app's ow
 charge and is sent back to its own scheme instead, because a link to an app the phone does
 not have goes nowhere at all.
 
+A card the payer no longer wants is removed the same way it is charged: the screen lists
+every card this server is holding, **Remove** posts the token to `/revoke` here, and that
+signs `tokens/revoke` with the hash token and forgets the card once PayLink has taken it
+away. Asking twice is harmless -- a token PayLink no longer holds is answered like one it
+has just revoked -- so a list left out of step is cleared by asking again.
+
 This server also serves the fields page at `/paylink-fields.html`, pointed at whichever
 PayLink it is configured for, so one tunnel covers the page, the webhook and the charge:
 

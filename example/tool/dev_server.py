@@ -215,6 +215,15 @@ def remember_card(card: dict) -> None:
     CARDS.chmod(0o600)
 
 
+def forget_card(token: str) -> None:
+    """Drops one card from the store, for a token that can no longer be charged."""
+    kept = [c for c in read_cards() if c.get("card_token") != token]
+
+    CARDS.parent.mkdir(parents=True, exist_ok=True)
+    CARDS.write_text(json.dumps(kept, indent=2))
+    CARDS.chmod(0o600)
+
+
 def call_tokens(path: str, payload: "OrderedDict[str, str]", config: dict[str, str]) -> tuple[int, dict]:
     """Signs a tokens/* call and makes it, handing back the status with the body.
 
@@ -266,8 +275,19 @@ PENDING: dict[str, dict] = {}
 DEFAULT_RETURN_URL = "myapp://payment-return"
 
 
-def charge_card(asked: dict, config: dict[str, str]) -> dict:
+def data_of(answer: dict) -> dict:
+    """The `data` block of a PayLink answer, or an empty one when it carried none."""
+    data = answer.get("data")
+
+    return data if isinstance(data, dict) else {}
+
+
+def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
     """Charges a vaulted card, asking the issuer to authenticate the payer first.
+
+    Hands back PayLink's own status with the answer. A refusal that reached the app as a
+    success would be read as a payment: the app has nothing else to go on, and a declined
+    charge announced as paid is the one mistake a payments harness must not make.
 
     Three calls rather than one, because a charge sent without an authentication return URL
     is never challenged: the issuer is not asked, and the payment goes through on the
@@ -282,9 +302,14 @@ def charge_card(asked: dict, config: dict[str, str]) -> dict:
     public_base = str(asked.get("public_base", "")).strip().rstrip("/")
     reference = secrets.token_hex(8)
 
+    # `reference`, not `reference_number`: /tokens/charge calls this field one thing and
+    # /tokens/authentication/setup calls it the other. The signature covers the fields the
+    # endpoint validates, so a name it does not know is dropped before PayLink signs and
+    # the call comes back 422 "Invalid signature" -- which leaves the charge unauthenticated
+    # rather than refused, and the payer is never asked for a passcode.
     setup_status, setup = call_tokens(
         "tokens/authentication/setup",
-        OrderedDict((("card_token", card_token), ("reference_number", reference))),
+        OrderedDict((("card_token", card_token), ("reference", reference))),
         config,
     )
 
@@ -302,6 +327,15 @@ def charge_card(asked: dict, config: dict[str, str]) -> dict:
     # never asked. Skipped when there is nowhere public to send the payer back to.
     authenticating = bool(public_base) and setup_status < 300 and setup.get("success")
 
+    # Said out loud, because the charge goes through either way: an unauthenticated charge
+    # is approved and settled, so the only thing that marks the difference is the passcode
+    # the payer was never shown, and nobody notices a prompt that did not appear.
+    if not authenticating:
+        sys.stderr.write(
+            f"not authenticating: public_base={public_base or 'none'} "
+            f"setup={setup_status} {setup.get('message') or ''}\n"
+        )
+
     if authenticating:
         charge["authentication_return_url"] = f"{public_base}/3ds/{reference}/return"
         charge["authentication_reference_id"] = setup["data"]["reference_id"]
@@ -309,7 +343,16 @@ def charge_card(asked: dict, config: dict[str, str]) -> dict:
     status, answer = call_tokens("tokens/charge", charge, config)
 
     if status != 202:
-        return answer | {"authenticated": authenticating}
+        # The invoice is the only handle on what the issuer decided. PayLink answers a
+        # settled charge with no authentication fields at all, so whether this was a
+        # frictionless pass or no authentication is a question for `payment_attempts.eci_raw`
+        # on the PayLink side -- and that needs the invoice id this prints.
+        sys.stderr.write(
+            f"charge {status} invoice={data_of(answer).get('invoice_id')} "
+            f"asked_the_issuer={bool(authenticating)}\n"
+        )
+
+        return status, answer | {"authenticated": authenticating}
 
     data = answer.get("data", {})
 
@@ -323,12 +366,32 @@ def charge_card(asked: dict, config: dict[str, str]) -> dict:
         "config": config,
     }
 
-    return {
+    return status, {
         "success": False,
         "status": "requires_authentication",
         "challenge_url": f"{public_base}/3ds/{reference}",
         "invoice_id": data.get("invoice_id"),
     }
+
+
+def revoke_card(asked: dict, config: dict[str, str]) -> dict:
+    """Takes a vaulted card out of use, and forgets it here once PayLink has.
+
+    Revoking is the payer asking for a card to be removed, so it is the one call here a
+    real app's own backend would make on a tap rather than on a payment. PayLink answers
+    the same way for a token it no longer holds as for one it has just taken away, so a
+    store left out of step can be cleared by asking again.
+    """
+    token = str(asked.get("card_token", "")).strip()
+    status, answer = call_tokens(
+        "tokens/revoke", OrderedDict((("card_token", token),)), config
+    )
+
+    if status < 300 and answer.get("success"):
+        forget_card(token)
+        print(f"Revoked card token {token}")
+
+    return answer
 
 
 def step_up_page(pending: dict) -> str:
@@ -517,7 +580,21 @@ class Handler(BaseHTTPRequestHandler):
     def _charge(self, asked: dict) -> None:
         """Charges a card this harness was told about, the way a real backend would."""
         try:
-            answer = charge_card(asked, self._credentials(asked))
+            status, answer = charge_card(asked, self._credentials(asked))
+        except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
+            self._send(502, {"error": str(failure)})
+
+            return
+
+        # A challenge is an answer, not a failure: the app reads `challenge_url` and sends
+        # the payer to their bank. Everything else carries PayLink's own verdict, because a
+        # refusal flattened to 200 is what makes a declined charge look like a payment.
+        self._send(200 if answer.get("challenge_url") or answer.get("success") else 422, answer)
+
+    def _revoke(self, asked: dict) -> None:
+        """Revokes a vaulted card, which is a call only something holding the token can make."""
+        try:
+            answer = revoke_card(asked, self._credentials(asked))
         except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
             self._send(502, {"error": str(failure)})
 
@@ -552,6 +629,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/charge"):
             self._charge(asked)
+
+            return
+
+        if self.path.startswith("/revoke"):
+            self._revoke(asked)
 
             return
 
