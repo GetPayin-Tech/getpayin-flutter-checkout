@@ -259,6 +259,12 @@ def call_tokens(path: str, payload: "OrderedDict[str, str]", config: dict[str, s
 # only: a challenge that outlives this process is one nobody is still looking at.
 PENDING: dict[str, dict] = {}
 
+# Where a finished challenge sends the payer when the charge named nowhere. This app's own
+# link, because it is the app this server was written for. Another app driving the same
+# server sends `return_url` on the charge and is sent back to its own scheme instead: a
+# link to an app the phone does not have goes nowhere at all.
+DEFAULT_RETURN_URL = "myapp://payment-return"
+
 
 def charge_card(asked: dict, config: dict[str, str]) -> dict:
     """Charges a vaulted card, asking the issuer to authenticate the payer first.
@@ -313,6 +319,7 @@ def charge_card(asked: dict, config: dict[str, str]) -> dict:
         "step_up_url": data.get("step_up_url"),
         "access_token": data.get("access_token"),
         "authentication_transaction_id": data.get("authentication_transaction_id"),
+        "return_url": str(asked.get("return_url") or DEFAULT_RETURN_URL).strip(),
         "config": config,
     }
 
@@ -358,7 +365,7 @@ def finish_authentication(reference: str) -> str:
     pending = PENDING.pop(reference, None)
 
     if pending is None:
-        return "myapp://payment-return?success=0&message=That+challenge+has+already+been+answered"
+        return f"{DEFAULT_RETURN_URL}?success=0&message=That+challenge+has+already+been+answered"
 
     status, answer = call_tokens(
         "tokens/authentication/complete",
@@ -380,7 +387,7 @@ def finish_authentication(reference: str) -> str:
         "message": str(answer.get("message") or ("Charged the saved card." if paid else "The bank did not approve it.")),
     }
 
-    return "myapp://payment-return?" + urllib.parse.urlencode(fields)
+    return pending["return_url"] + "?" + urllib.parse.urlencode(fields)
 
 
 def refused_code(detail: str) -> str | None:
