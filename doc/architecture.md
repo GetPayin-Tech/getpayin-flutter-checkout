@@ -70,7 +70,7 @@ lives in `webview/navigation_handler.dart` and `sessions/session_host.dart`, whi
 classes with no widgets in them. That is what lets the suite cover the session lifecycle and
 the navigation decisions in the Dart VM.
 
-Three details in there are load-bearing, not style:
+Four details in there are load-bearing, not style:
 
 1. **The navigation handler belongs to one checkout.** It completes at most once, so it is
    rebuilt when `checkoutUrl`, `returnUrl` or `expectedInvoiceId` changes, and must _not_ be
@@ -82,6 +82,12 @@ Three details in there are load-bearing, not style:
 3. **The wallet settings are applied before the page loads.** Android's Payment Request
    switch takes effect at the next load, so setting it afterwards gives the payer a checkout
    with no Google Pay button and nothing in the log.
+4. **A screen that goes without an answer settles as cancelled.** The app can pop or remove
+   the checkout's route in its own code, as a sign-out that resets its screens does, and
+   neither asks the screen first. Unsettled, the `open()` future would never return and the
+   session guard would report busy for the rest of the process. After a failure once the
+   checkout page had loaded, the session host settles it `outcomeUnknown` instead, whoever
+   takes it away.
 
 ## The payment sheet, and the two kinds of web view
 
@@ -128,7 +134,7 @@ neither is tied to a live checkout:
 So the watcher keeps one subscription for the whole process, opened by `prime()` as the
 provider mounts; reads the initial link once, there; and tells a checkout only about links
 that arrive while it is watching. A link that arrives with nothing waiting for it is dropped,
-and refused if it turns up again.
+and refused if it turns up again within ten minutes, as is a link that settled a checkout.
 
 Getting this wrong is not a style question: it is how a link that belongs to nothing becomes
 the next checkout's `paid`.

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/deferred.dart';
@@ -104,13 +105,31 @@ Future<CheckoutResult> runBrowserCheckout(
   final options = request.options;
   final result = Deferred<CheckoutResult>();
   final dismissed = Deferred<void>();
+  var passedOver = false;
+  late CheckoutWatcher linkWatcher;
 
-  final linkWatcher = phone.watchReturnLink(
-    options.returnUrl,
-    (url) => result.resolve(
+  void onLink(String url) {
+    if (!returnLinkAnswers(url, expectedInvoiceId: options.expectedInvoiceId)) {
+      if (kDebugMode) {
+        debugPrint(
+          'GetPayIn: passed over a return link that names another invoice, or none',
+        );
+      }
+
+      passedOver = true;
+      linkWatcher.stop();
+      linkWatcher = phone.watchReturnLink(options.returnUrl, onLink);
+
+      return;
+    }
+
+    result.resolve(
       resolveReturn(url, expectedInvoiceId: options.expectedInvoiceId),
-    ),
-  );
+    );
+  }
+
+  linkWatcher = phone.watchReturnLink(options.returnUrl, onLink);
+
   final dismissalWatcher = phone.watchDismissal(() => dismissed.resolve(null));
 
   try {
@@ -123,13 +142,27 @@ Future<CheckoutResult> runBrowserCheckout(
 
     final arrived = await _withGrace(result.future, phone.grace);
 
-    return arrived ?? cancelledResult(closedByPayerMessage);
+    return arrived ??
+        (passedOver
+            ? _closedUnconfirmed
+            : cancelledResult(closedByPayerMessage));
   } finally {
     linkWatcher.stop();
     dismissalWatcher.stop();
     await _ignoringFailure(phone.closeSheet);
   }
 }
+
+/// The result for a sheet that closed with no answer after it had passed over a link.
+///
+/// On Android any link to the app brings it to the front, and that reads exactly like the
+/// payer closing the sheet. The payer may still be paying in the browser behind the app,
+/// so the close is one nobody can confirm, never a cancel.
+const CheckoutResult _closedUnconfirmed = CheckoutResult(
+  status: CheckoutStatus.notPaid,
+  code: CheckoutResultCode.outcomeUnknown,
+  message: closedByPayerMessage,
+);
 
 /// The result if it arrives within [grace], or null when the grace period runs out first.
 Future<CheckoutResult?> _withGrace(

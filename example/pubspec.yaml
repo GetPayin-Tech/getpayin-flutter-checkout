@@ -18,6 +18,8 @@ dependencies:
 
 dev_dependencies:
   flutter_lints: '>=5.0.0 <7.0.0'
+  flutter_test:
+    sdk: flutter
 
 # The sheet draws Material icons, whose code points sit in the private use area. Without
 # this the icon font is not bundled and every one of them renders as whatever the system

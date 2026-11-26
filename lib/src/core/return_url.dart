@@ -88,15 +88,27 @@ bool _repeatsAField(Map<String, List<String>> params) {
 /// `Success`, `INVOICE_ID`, `invoiceId` and `%73uccess` all reach a reader that folds case,
 /// ignores separators or decodes names before matching. A server verifying the signature
 /// over the raw query string would not see them as those fields, so the link is refused
-/// rather than read one way here and another way there.
+/// rather than read one way here and another way there. A name with a bracket or a control
+/// character in it, written or encoded, is refused too, because a server may read it as one
+/// of the four.
 bool _hasAmbiguousName(List<String> names) {
   return names.any(
     (name) =>
+        _hasUnsafeCharacter(name) ||
         !_readKeys.contains(name) &&
-        (_readTokens.contains(normalizeToken(name)) ||
-            _readTokens.contains(normalizeToken(decodeQueryComponent(name)))),
+            (_readTokens.contains(normalizeToken(name)) ||
+                _readTokens
+                    .contains(normalizeToken(decodeQueryComponent(name)))),
   );
 }
+
+/// A bracket or a control character in a field name.
+final RegExp _unsafeCharacter = RegExp(r'[\[\]\x00-\x1F\x7F]');
+
+/// True when [name] holds a bracket or a control character, as written or once decoded.
+bool _hasUnsafeCharacter(String name) =>
+    _unsafeCharacter.hasMatch(name) ||
+    _unsafeCharacter.hasMatch(decodeQueryComponent(name));
 
 /// Maps GetPayIn's `success` flag onto an outcome; anything but `1` or `0` is unreadable.
 CheckoutStatus? _readStatus(String? success) {
@@ -179,6 +191,35 @@ CheckoutResult readReturnClaim(String url) {
     returnUrl: url,
   );
 }
+
+/// The invoice a return link names, read even when the rest of the link cannot be.
+///
+/// Null when the link names none, or names one more than once. It says only which
+/// checkout the link is for, never how that checkout ended: [readReturnClaim] decides that.
+String? readReturnInvoiceId(String url) {
+  final values = readQuery(parseUrl(url)?.query ?? '')[_invoiceKey];
+
+  return values == null || values.length != 1 || values.first.isEmpty
+      ? null
+      : values.first;
+}
+
+/// Whether a return link can be the answer of a checkout bound to [expectedInvoiceId].
+///
+/// A link reaches a checkout whether it is that checkout's or not: a late one from an earlier
+/// checkout, or a made-up one. Bound to an invoice, a link naming another invoice, or none,
+/// is not this checkout answering, paid or not. Taken, it would end the checkout the payer is
+/// still in with a decline or `wrongInvoice` while the real payment may yet finish, so every
+/// checkout passes over it and goes on waiting for its own. Unbound, every link answers.
+///
+/// The invoice is read even from a link whose result cannot be: a server that cannot say how
+/// the charge ended still names the invoice, and that link is this checkout's answer.
+bool returnLinkAnswers(String url, {Object? expectedInvoiceId}) =>
+    expectedInvoiceId == null ||
+    invoiceIdMatches(
+      expected: expectedInvoiceId,
+      reported: readReturnInvoiceId(url),
+    );
 
 /// Turns a return link into a payment result.
 ///

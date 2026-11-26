@@ -81,17 +81,22 @@ GoRouter(redirect: (context, state) => paymentReturn.redirectFor(state.uri.toStr
 ## Quick start — the payment sheet
 
 ```dart
-final result = await GetPayInPaymentSheet.show(
-  context,
-  PaymentSheetConfiguration(
-    session: PayLinkFieldsSession.fromInit(payment)!,
-    fieldsPageUrl: 'https://shop.example.com/paylink-fields.html',
-    returnUrl: 'myapp://payment-return',
-    expectedInvoiceId: invoiceId,
-    amountLabel: r'$97.42',
-    wallets: const [PaymentWallet.applePay, PaymentWallet.googlePay],
-  ),
-);
+final session = PayLinkFieldsSession.fromInit(payment);
+
+// Null when hosted card fields are off for the company: take the same payment on the
+// hosted checkout with `GetPayInCheckout.open(checkoutUrl, ...)` instead.
+if (session != null) {
+  final result = await GetPayInPaymentSheet.show(
+    context,
+    PaymentSheetConfiguration(
+      session: session,
+      fieldsPageUrl: 'https://shop.example.com/paylink-fields.html',
+      returnUrl: 'myapp://payment-return',
+      amountLabel: r'$97.42',
+      wallets: const [PaymentWallet.applePay, PaymentWallet.googlePay],
+    ),
+  );
+}
 ```
 
 It needs hosted fields enabled for the company, a registered origin, and the page hosted
@@ -130,7 +135,8 @@ When integrating:
     `tokenization_url`; open it with `GetPayInCheckout.saveCard`, never with `open`. A
     verification run leaves its invoice unpaid on purpose, so `open` would report every
     successful save as `notPaid`. The token is never on the return link — it arrives with
-    the `card_token.created` webhook. The payment sheet cannot save a card at all.
+    the `card_token.created` webhook. The payment sheet keeps a card only alongside a
+    payment, with `keepTheCard`; it cannot run a save on its own.
 11. **Wire the server side**: `POST /api/v2/integration/init` to create, the `invoice.paid`
     webhook to confirm. Deliver only when the verified event says success, the invoice
     status is `PAID`, and the invoice is one that server created.

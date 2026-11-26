@@ -17,18 +17,18 @@ Every failure arrives as a failed future, so one `catch` covers them all.
 
 ### `OpenCheckoutOptions`
 
-| Option              | Type                     | Default             | What it does                                                                                                                                                                                   |
-| ------------------- | ------------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `returnUrl`         | `String`                 | required            | The link the checkout returns to. Must match the integration's Mobile App Return Scheme.                                                                                                       |
-| `expectedInvoiceId` | `Object?`                | `null`              | The invoice your server created this checkout for: a `String` or an `int`. Compared as trimmed text, leading zeros ignored. A return link naming a different invoice is reported as `notPaid`. |
-| `googlePayInApp`    | `bool`                   | `false`             | Draw the checkout in the app's own screen on Android. Set it only after Google approves your app. Ignored on iOS.                                                                              |
-| `ownSchemes`        | `List<String>`           | `const []`          | Extra schemes this checkout should refuse, on top of `declareHostAppSchemes`.                                                                                                                  |
-| `title`             | `String?`                | `'Secure checkout'` | Title in the in-app screen's top bar.                                                                                                                                                          |
-| `closeLabel`        | `String?`                | `'Close'`           | Label of the top bar's close button, in your app's language. Also what a screen reader announces when set.                                                                                     |
-| `loadErrorMessage`  | `String?`                | English text        | Shown to the payer when the checkout page cannot be loaded.                                                                                                                                    |
-| `linkErrorMessage`  | `String?`                | English text        | Shown to the payer when the phone cannot open a link the checkout needed, such as a bank app for 3-D Secure that is not installed.                                                             |
-| `headerShown`       | `bool`                   | `true`              | Show the top bar, which is the payer's only way to close the checkout. The bar is shown anyway if the checkout fails to load, so a failure always has a way out.                               |
-| `presentation`      | `CheckoutPresentation?`  | `null`              | Overrides the platform rule. For tests and for diagnosing a build.                                                                                                                             |
+| Option              | Type                    | Default             | What it does                                                                                                                                                                                                                  |
+| ------------------- | ----------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `returnUrl`         | `String`                | required            | The link the checkout returns to. Must match the integration's Mobile App Return Scheme.                                                                                                                                      |
+| `expectedInvoiceId` | `Object?`               | `null`              | The invoice your server created this checkout for: a `String` or an `int`. Compared as trimmed text, leading zeros ignored. A paid link naming a different invoice is `notPaid`; the browser sheet waits past it for its own. |
+| `googlePayInApp`    | `bool`                  | `false`             | Draw the checkout in the app's own screen on Android. Set it only after Google approves your app. Ignored on iOS.                                                                                                             |
+| `ownSchemes`        | `List<String>`          | `const []`          | Extra schemes this checkout should refuse, on top of `declareHostAppSchemes`.                                                                                                                                                 |
+| `title`             | `String?`               | `'Secure checkout'` | Title in the in-app screen's top bar.                                                                                                                                                                                         |
+| `closeLabel`        | `String?`               | `'Close'`           | Label of the top bar's close button, in your app's language. Also what a screen reader announces when set.                                                                                                                    |
+| `loadErrorMessage`  | `String?`               | English text        | Shown to the payer when the checkout page cannot be loaded.                                                                                                                                                                   |
+| `linkErrorMessage`  | `String?`               | English text        | Shown to the payer when the phone cannot open a link the checkout needed, such as a bank app for 3-D Secure that is not installed.                                                                                            |
+| `headerShown`       | `bool`                  | `true`              | Show the top bar, which is the payer's only way to close the checkout. The bar is shown anyway if the checkout fails to load, so a failure always has a way out.                                                              |
+| `presentation`      | `CheckoutPresentation?` | `null`              | Overrides the platform rule. For tests and for diagnosing a build.                                                                                                                                                            |
 
 `expectedInvoiceId` is typed `Object?` because the two sides disagree: init returns the
 invoice id as a JSON number and the return link carries it as text. A non-blank `String` or
@@ -68,7 +68,8 @@ class CardSaveResult {
   /// `AUTHORIZED`, `VOIDED` or `CAPTURED`. Never `PAID`.
   final String? verificationStatus;
 
-  /// `unreadableReturnLink` or `wrongInvoice`, and null for a card simply refused.
+  /// `unreadableReturnLink`, `wrongInvoice` or `outcomeUnknown`, and null for a card simply
+  /// refused.
   final CheckoutResultCode? code;
 
   final String? message;
@@ -105,9 +106,11 @@ opening anything. Useful on a diagnostic screen.
 static bool get busy
 ```
 
-True while a checkout is open, the payment sheet included: one guard covers both, because a
-second checkout opened over a live one would stack a web view under a dead one. Guard your
-Pay button with it to avoid `GetPayInSessionBusyError` on a double tap.
+True while a checkout this package opens is open: `open`, `saveCard` and the payment
+sheet. One guard covers them all, because a second checkout opened over a live one would
+stack a web view under a dead one. Guard your Pay button with it to avoid
+`GetPayInSessionBusyError` on a double tap. A `GetPayInCheckoutView` you place on a screen
+of your own is yours to guard: it does not take this one.
 
 ## `declareHostAppSchemes(schemes)` and `hostAppSchemes()`
 
@@ -145,6 +148,8 @@ GetPayInCheckoutView({
   String? loadErrorMessage,
   String? linkErrorMessage,
   CheckoutLoadErrorCallback? onLoadError,
+  VoidCallback? onPageLoaded,
+  VoidCallback? onPassedOver,
 })
 ```
 
@@ -156,6 +161,19 @@ thrown, so a bad value from your server does not take the screen down.
 `onLoadError`'s first argument is for the payer, already in your app's language. The second
 is the developer-facing cause when there is one, naming the option and the value it got:
 log it, and never put it on a payment screen.
+
+`onPageLoaded` fires each time a page of the checkout finishes loading. From the first one
+the payer can pay, so a failure reported after it is no sign that nothing was charged: if
+your screen is closed then, report the payment as `CheckoutResultCode.outcomeUnknown`, never
+as cancelled, and keep the view on screen under your message so a late answer still
+arrives. A failed page finishes loading too, so note whether it had loaded as the failure
+arrives. `GetPayInProvider`'s own screen does exactly this.
+
+`onPassedOver` fires when, with `expectedInvoiceId` set, the page went to a return link that
+names another invoice, or none. The view stops that link and goes on waiting for its own,
+but the real payment may still be running: a screen of yours closed after it should report
+`CheckoutResultCode.outcomeUnknown`, never cancelled. `CheckoutNavigationHandler` takes the
+same `onPassedOver`.
 
 Do not register a JavaScript channel on this view, call `runJavaScript` on it, or add
 scripts to a web view of your own around it.
@@ -174,28 +192,28 @@ See [The payment sheet](payment-sheet.md), which covers what it needs before it 
 
 ### `PaymentSheetConfiguration`
 
-| Option                     | Type                                              | Default    | What it does                                                                               |
-| -------------------------- | ------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| `session`                  | `PayLinkFieldsSession`                            | required   | The payment, from your server's `/init` with `mode: "fields"`.                             |
-| `fieldsPageUrl`            | `String`                                          | required   | The page you host at the integration's registered origin.                                  |
-| `returnUrl`                | `String`                                          | required   | The link a wallet charge comes back to, and the one the hosted fallback uses.              |
-| `fieldsPageHeaders`        | `Map<String, String>`                             | `{}`       | Headers the page is asked for with, for an origin that will not serve it without.          |
-| `collectBillingAddress`    | `bool`                                            | `false`    | Ask the payer for the address the card is billed to, and the name it is in.                |
-| `keepTheCard`              | `bool`                                            | `false`    | Ask the payer to keep the card for next time. PayLink's SDK draws the agreement.           |
-| `successPause`             | `Duration`                                        | `1200ms`   | How long the sheet says the payment went through before it closes.                         |
-| `onHandover`               | `void Function(FieldsError)?`                     | `null`     | Called with the reason when the sheet gives up and opens the hosted checkout.              |
-| `onDiagnostic`             | `void Function(String)?`                          | `null`     | A line for everything the card box reports. Says what happened, never what was typed.      |
-| `billingCountries`         | `List<BillingCountry>`                            | all        | The countries the billing form offers. Narrow it, or translate it.                         |
-| `billingCountry`           | `String`                                          | `'EG'`     | The country that form starts on, as an ISO 3166-1 alpha-2 code.                            |
-| `expectedInvoiceId`        | `Object?`                                         | `null`     | The invoice this payment is for, so a charge booked against another is refused.            |
-| `amountLabel`              | `String?`                                         | `null`     | What the pay button says until the gateway has priced the payment.                         |
-| `wallets`                  | `List<PaymentWallet>`                             | `[]`       | The wallets to offer. One is shown: the one that belongs on this platform.                 |
-| `savedCards`               | `List<SavedCard>`                                 | `[]`       | The payer's vaulted cards, from your own backend.                                          |
-| `chargeSavedCard`          | `Future<CheckoutResult> Function(SavedCard)?`     | `null`     | Charges a vaulted card. Your server's call, since it is signed with your hash token.       |
-| `ownSchemes`               | `List<String>`                                    | `[]`       | Extra schemes the wallet surface should refuse, on top of `declareHostAppSchemes`.         |
-| `style`                    | `PaymentSheetStyle`                               | Stripe-ish | How the sheet is drawn, on both sides of the card box.                                     |
-| `strings`                  | `PaymentSheetStrings`                             | English    | Every word the sheet says.                                                                 |
-| `fallBackToHostedCheckout` | `bool`                                            | `true`     | Send the payer to `checkout_url` when the fields cannot take this payment.                 |
+| Option                     | Type                                          | Default    | What it does                                                                                                                 |
+| -------------------------- | --------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `session`                  | `PayLinkFieldsSession`                        | required   | The payment, from your server's `/init` with `mode: "fields"`.                                                               |
+| `fieldsPageUrl`            | `String`                                      | required   | The page you host at the integration's registered origin.                                                                    |
+| `returnUrl`                | `String`                                      | required   | The link a wallet charge comes back to, and the one the hosted fallback uses.                                                |
+| `fieldsPageHeaders`        | `Map<String, String>`                         | `{}`       | Headers the page is asked for with, for an origin that will not serve it without.                                            |
+| `collectBillingAddress`    | `bool`                                        | `false`    | Ask the payer for the address the card is billed to, and the name it is in.                                                  |
+| `keepTheCard`              | `bool`                                        | `false`    | Ask the payer to keep the card for next time. PayLink's SDK draws the agreement.                                             |
+| `successPause`             | `Duration`                                    | `1200ms`   | How long the sheet says the payment went through before it closes.                                                           |
+| `onHandover`               | `void Function(FieldsError)?`                 | `null`     | Called with the reason when the sheet gives up and opens the hosted checkout.                                                |
+| `onDiagnostic`             | `void Function(String)?`                      | `null`     | A line for everything the card box reports. Says what happened, never what was typed.                                        |
+| `billingCountries`         | `List<BillingCountry>`                        | all        | The countries the billing form offers. Narrow it, or translate it.                                                           |
+| `billingCountry`           | `String`                                      | `'EG'`     | The country that form starts on, as an ISO 3166-1 alpha-2 code.                                                              |
+| `expectedInvoiceId`        | `Object?`                                     | `null`     | A result naming another invoice is refused. Left `null`, the session's invoice is used. A saved card's charge makes its own. |
+| `amountLabel`              | `String?`                                     | `null`     | What the pay button says until the gateway has priced the payment.                                                           |
+| `wallets`                  | `List<PaymentWallet>`                         | `[]`       | The wallets to offer. One is shown: the one that belongs on this platform.                                                   |
+| `savedCards`               | `List<SavedCard>`                             | `[]`       | The payer's vaulted cards, from your own backend.                                                                            |
+| `chargeSavedCard`          | `Future<CheckoutResult> Function(SavedCard)?` | `null`     | Charges a vaulted card. Your server's call; it may open the issuer's challenge itself.                                       |
+| `ownSchemes`               | `List<String>`                                | `[]`       | Extra schemes the wallet surface should refuse, on top of `declareHostAppSchemes`.                                           |
+| `style`                    | `PaymentSheetStyle`                           | Stripe-ish | How the sheet is drawn, on both sides of the card box.                                                                       |
+| `strings`                  | `PaymentSheetStrings`                         | English    | Every word the sheet says.                                                                                                   |
+| `fallBackToHostedCheckout` | `bool`                                        | `true`     | Send the payer to `checkout_url` when the fields cannot take this payment.                                                   |
 
 ## `PayLinkFieldsSession.fromInit(response)`
 
@@ -210,11 +228,51 @@ without hosted fields gets — so fall back to `checkout_url`.
 ## `buildFieldsPageHtml(sdkUrl:)`
 
 ```dart
-String buildFieldsPageHtml({required String sdkUrl, String channel = fieldsChannelName})
+String buildFieldsPageHtml({
+  required String sdkUrl,
+  List<String> otherSdkUrls = const <String>[],
+  String channel = fieldsChannelName,
+})
 ```
 
 Writes the page you host at your registered origin. `dart run tool/write_fields_page.dart`
-prints it, and [`doc/paylink-fields.html`](paylink-fields.html) is a copy of it.
+prints it, and [`doc/paylink-fields.html`](paylink-fields.html) is a copy of it. The wallet
+button loads an SDK its link names only when it is `sdkUrl` or one of `otherSdkUrls`,
+compared by address and path: list every PayLink whose wallet payments the page takes.
+
+## The payment sheet's pieces
+
+For a sheet of your own. [Building your own sheet](payment-sheet.md#building-your-own-sheet)
+says how they fit together.
+
+| Export                           | What it is                                                                                                                                          |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CardFieldsController`           | The card box: the page, the channel, and the events it reports.                                                                                     |
+| `CardFieldsController.onRefused` | One line for each message the box refused, and why: one without the page's key, or an answer to no charge it is waiting for.                        |
+| `CardFieldsSnapshot`             | What the box knows at one moment. `chargeStarted` is true from the charge until its answer.                                                         |
+| `applyFieldsEvent`               | What one event does to a snapshot, as a pure function.                                                                                              |
+| `FieldsEvent`                    | What the page reports. The eight kinds are listed below the table.                                                                                  |
+| `FieldsPayment.attempt`          | The code the host sent with the charge; the box reports only an answer that carries it back.                                                        |
+| `FieldsError.attempt`            | The same code on a failure; while a charge runs, the box takes only a failure that carries it.                                                      |
+| `payCommand({..., attempt})`     | The script that charges the card, carrying that code.                                                                                               |
+| `FieldsFailure`                  | Why the fields could not take the payment. `sendsPayerToHostedCheckout` says which ones hand the payer over.                                        |
+| `WalletSurface`                  | The wallet button. Its four callbacks are listed below the table.                                                                                   |
+| `PayLinkFieldsSession`           | The payment, as `/init` described it.                                                                                                               |
+
+A `FieldsEvent` is one of `FieldsReady`, `FieldsChanged`, `FieldsAuthenticating`,
+`FieldsCharging`, `FieldsPayment`, `FieldsError`, `FieldsWalletReady` and
+`FieldsWalletError`.
+
+`WalletSurface` reports through four callbacks. `onCharging` says its charge is out;
+`onChargingAfterLeaving`, the same after the button left the screen; `onUnavailable`, that the
+wallet cannot be shown; `onChallenge`, that the issuer's check is up or has gone.
+
+`FieldsFailure` names every code PayLink's fields send about a payment. `alreadyPaid` is fatal
+but never sends the payer to the hosted checkout: the sheet reports it as `outcomeUnknown`.
+`notPayable` and `expired` hand the payer over like the other fatal ones, and PayLink's page
+says why. `consentRequired` asks the payer to tick the box that keeps the card. A code about
+the page itself, such as a missing container or client token, arrives as `unknown` and hands
+the payer over.
 
 ## `PaymentReturnRedirect`
 
@@ -280,9 +338,9 @@ on, and the key to look a message of your own up by.
 | Code                      | What happened                                                                                               |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `unreadableReturnLink`    | The link's own fields could not be read. Alert on it: the backend and this reader disagree about the shape. |
-| `wrongInvoice`            | The link named an invoice other than the one the checkout was opened for.                                   |
-| `unexpectedInvoiceStatus` | The link reported `success=1` with an `invoice_status` other than `PAID`.                                   |
-| `outcomeUnknown`          | A charge was sent and its answer never arrived. The card may well have been charged.                        |
+| `wrongInvoice`            | A paid claim named an invoice other than the one it was bound to. A checkout passes over such a link.       |
+| `unexpectedInvoiceStatus` | A paid claim (a link, the sheet's charge, a saved card) whose `invoice_status` is not `PAID`.               |
+| `outcomeUnknown`          | A charge was sent and its answer never arrived, or PayLink said the invoice was already paid.               |
 | `checkoutUnavailable`     | The sheet could not be shown at all and its hosted fallback was off. Nothing was charged.                   |
 
 A genuine decline carries no code at all, which is how it is told apart from a link that
@@ -305,9 +363,16 @@ enum CheckoutPresentation { inApp, browser }
 ### The default texts
 
 `defaultLoadErrorMessage`, `defaultLinkErrorMessage`, `defaultCheckoutTitle`,
-`defaultCloseLabel`, `defaultCloseAccessibilityLabel`, `closedByPayerMessage` and
-`closedByUnmountMessage` are exported so you can translate against them, or recognise the
-message a cancelled result carries.
+`defaultCloseLabel`, `defaultCloseAccessibilityLabel`, `closedByPayerMessage`,
+`closedByUnmountMessage` and `closedByAppMessage` are exported so you can translate against
+them, or recognise the message a cancelled result carries. `closedByAppMessage` is what an
+in-app checkout settles with when your app takes its screen away in its own code. A reset
+that takes the provider away too settles with `closedByUnmountMessage`; a provider mounted
+above the navigator stays, so it reports `closedByAppMessage` even when the whole app is
+replaced. A provider that goes while its screen stays, as one inside a router shell can,
+takes the screen away with it. Both mean the screen went with no answer. After a failure
+once the checkout page had loaded, neither is used: the checkout settles `notPaid` with
+`outcomeUnknown`.
 
 ## Errors
 

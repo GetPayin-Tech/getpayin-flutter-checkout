@@ -44,6 +44,15 @@ void main() {
       expect(event.invoiceId, 90210);
       expect(event.paidStatus, 'PAID');
       expect(event.reasonCode, '100');
+      expect(event.attempt, isNull);
+    });
+
+    test('reads the code the charge was sent with', () {
+      final event = parseFieldsEvent(
+        '{"type":"payment","success":true,"attempt":"9f3a"}',
+      )! as FieldsPayment;
+
+      expect(event.attempt, '9f3a');
     });
 
     test('reads a failure as the code the sheet decides on', () {
@@ -53,6 +62,15 @@ void main() {
 
       expect(event.failure, FieldsFailure.sessionInvalid);
       expect(event.message, 'gone');
+      expect(event.attempt, isNull);
+    });
+
+    test('reads the code of the charge a failure came during', () {
+      final event = parseFieldsEvent(
+              '{"type":"error","code":"declined","attempt":"9f3a"}')!
+          as FieldsError;
+
+      expect(event.attempt, '9f3a');
     });
 
     test('reads the wallet saying it is ready, and saying it is not', () {
@@ -257,6 +275,18 @@ void main() {
       expect(
         payCommand(keepTheCard: true),
         'window.__paylinkHost && window.__paylinkHost.pay({"tokenize":true});',
+      );
+    });
+
+    /*
+     * The channel is shared with every frame the page holds, and no platform names who
+     * posted. The code goes to the page itself, which no frame from another site can read,
+     * and only an answer carrying it is the answer to this charge.
+     */
+    test('sends the code the answer has to come back with', () {
+      expect(
+        payCommand(attempt: '9f3a'),
+        'window.__paylinkHost && window.__paylinkHost.pay({"attempt":"9f3a"});',
       );
     });
 

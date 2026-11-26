@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 
 import '../core/return_url.dart';
+import '../core/url.dart';
 import 'watcher.dart';
 
 /// Where the return link can arrive from while a checkout is open.
@@ -48,21 +50,37 @@ class DeepLinkSource {
 /// the app with a link shaped like a return link.
 class ReturnLinkWatcher {
   /// Creates a watcher over [source], or over `app_links` when none is given.
-  ReturnLinkWatcher({DeepLinkSource? source})
-      : _source = source ?? DeepLinkSource.platform();
+  ///
+  /// [now] is the clock the watcher reads, for a test that has to move it.
+  ReturnLinkWatcher({DeepLinkSource? source, DateTime Function()? now})
+      : _source = source ?? DeepLinkSource.platform(),
+        _now = now ?? DateTime.now;
 
   final DeepLinkSource _source;
+
+  final DateTime Function() _now;
 
   /// The checkouts waiting for a link right now, in the order they started.
   final List<_CheckoutWatch> _watching = <_CheckoutWatch>[];
 
-  /// Links that reached the app with nothing waiting for them, refused ever after.
+  /// Links the app received while starting, refused ever after.
   ///
-  /// One link can reach the app by both of the plugin's paths, in either order, so the
-  /// decision is remembered rather than taken twice. A later link identical to a dropped
-  /// one is dropped with it: a checkout that hears nothing ends as cancelled, which is the
-  /// answer to give when there is nothing to tie a link to the payment in front of it.
-  final Set<String> _orphaned = <String>{};
+  /// The launch link can reach the app by both of the plugin's paths, in either order, so
+  /// the decision about it is remembered rather than taken twice.
+  final Set<String> _startupLinks = <String>{};
+
+  /// How long a link that reached no checkout, or settled one, is refused for.
+  static const Duration _spentFor = Duration(minutes: 10);
+
+  /// Links that reached the app with nobody waiting, or settled a checkout, and when.
+  ///
+  /// The plugin can hand a link over again: by both of its paths, or to an activity Android
+  /// recreated. Such a link belongs to a checkout that is over, and offered to the next one
+  /// it would settle that one on another payment's answer, so it is refused. Kept for
+  /// [_spentFor] rather than for the life of the process: a repeat comes within moments,
+  /// and the app's own links, which can carry anything, a sign-in token included, are not
+  /// kept beyond that.
+  final Map<String, DateTime> _spent = <String, DateTime>{};
 
   /// The one subscription, opened as the app starts and never cancelled.
   ///
@@ -99,23 +117,56 @@ class ReturnLinkWatcher {
   Future<void> _begin() async {
     _subscription ??= _source.links().listen(_arrived, onError: (Object _) {});
 
-    await _readInitialLink(_orphaned.add);
+    await _readInitialLink(_startupLinks.add);
 
     _primed = true;
   }
 
   /// Offers one link to every checkout watching, and drops it when none is.
+  ///
+  /// A link dropped, or taken by a checkout, is spent: a second delivery of it is refused.
   void _arrived(Uri uri) {
     final url = uri.toString();
 
-    if (!_primed || _watching.isEmpty || _orphaned.contains(url)) {
-      _orphaned.add(url);
+    if (!_primed) {
+      _startupLinks.add(url);
 
       return;
     }
 
+    final now = _now();
+
+    _spent.removeWhere((_, at) => now.difference(at) >= _spentFor);
+
+    if (_startupLinks.contains(url) || _spent.containsKey(url)) {
+      _dropped(url, 'it was already handed over or dropped');
+
+      return;
+    }
+
+    if (_watching.isEmpty) {
+      _spent[url] = now;
+      _dropped(url, 'no checkout was waiting for it');
+
+      return;
+    }
+
+    var taken = false;
+
     for (final watching in _watching.toList(growable: false)) {
-      watching.offer(url);
+      taken = watching.offer(url) || taken;
+    }
+
+    if (taken) {
+      _spent[url] = now;
+    }
+  }
+
+  /// Says in a debug build that a link was dropped, and why, without what it carried: the
+  /// app's own links can carry anything, a sign-in token included.
+  void _dropped(String url, String why) {
+    if (kDebugMode) {
+      debugPrint('GetPayIn: dropped a link to ${linkForLog(url)}: $why');
     }
   }
 
@@ -149,14 +200,17 @@ class _CheckoutWatch {
 
   bool _matched = false;
 
-  /// Hands [url] over when it is the link this checkout is waiting for, once.
-  void offer(String url) {
+  /// Hands [url] over when it is the link this checkout is waiting for, once, and says
+  /// whether it did.
+  bool offer(String url) {
     if (_matched || !matchesReturnUrl(url, returnUrl)) {
-      return;
+      return false;
     }
 
     _matched = true;
     onMatch(url);
+
+    return true;
   }
 }
 

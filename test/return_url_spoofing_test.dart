@@ -80,7 +80,10 @@ void main() {
         'a state field GetPayIn never sends',
         'myapp://payment-return?state=approved'
       ),
-      ('a success array suffix', 'myapp://payment-return?success[]=1'),
+      (
+        'a success name ending in brackets',
+        'myapp://payment-return?success[]=1'
+      ),
     ];
 
     for (final (label, url) in forged) {

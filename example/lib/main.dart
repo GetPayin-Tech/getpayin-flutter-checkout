@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
 import 'package:http/http.dart' as http;
 
+import 'saved_card_charge.dart';
 import 'store.dart';
 
 /// The scheme this app answers to, declared in `AndroidManifest.xml` and `Info.plist`.
@@ -36,6 +37,11 @@ const String defaultPaymentsServer = String.fromEnvironment(
 /// It has to be served from the origin registered for the integration, so there is no
 /// sensible default: left out, the field starts empty and you type it.
 const String defaultFieldsPage = String.fromEnvironment('FIELDS_PAGE');
+
+/// The test server's key, from `--dart-define=DEV_SERVER_KEY=...`.
+///
+/// The server prints it as it starts. Left out, the field starts empty and you type it.
+const String defaultServerKey = String.fromEnvironment('DEV_SERVER_KEY');
 
 /// Headers the fields page is asked for with while it is served through a dev tunnel.
 ///
@@ -152,15 +158,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
   late final TextEditingController _fieldsPage =
       _remembered('fields_page', defaultFieldsPage);
 
-  /// The integration the dev server should sign with, when it is not to use its own.
+  /// The key the test server printed as it started, which every call to it carries.
   ///
-  /// Kept with the rest so a tester is not retyping an account every launch. It is written
-  /// to this app's own storage, which on a developer's test phone is the trade they asked
-  /// for; it is still never compiled in, and the signing still happens on the server.
-  late final TextEditingController _baseUrl = _remembered('base_url', '');
-  late final TextEditingController _publicToken =
-      _remembered('public_token', '');
-  late final TextEditingController _hashToken = _remembered('hash_token', '');
+  /// It opens nothing but that server, which signs with credentials of its own and takes
+  /// none from the phone, so it is kept with the server's address rather than retyped.
+  late final TextEditingController _serverKey =
+      _remembered('server_key', defaultServerKey);
 
   late String _currency = _store.text('currency', 'EGP');
   late bool _googlePayInApp = _store.flag('google_pay_in_app');
@@ -176,8 +179,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   /// Everything this attempt did, in order, for a tester reporting back.
   ///
   /// Kept as plain lines rather than objects because its only reader is a person pasting it
-  /// into a message. Nothing secret goes in: the hash token is never here, because it never
-  /// leaves the dev server except as the one field the gear sends it in.
+  /// into a message. Nothing secret goes in: the hash token never leaves the test server,
+  /// and the server key is never written here.
   late final List<String> _trace = _store.lines('trace');
 
   /// The cards the dev server has been told about, for the sheet to offer.
@@ -193,6 +196,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   /// The token being removed, so that card alone shows it rather than the whole screen.
   String? _removing;
+
+  /// What every call to the test server carries.
+  Map<String, String> get _serverHeaders => <String, String>{
+        'Content-Type': 'application/json',
+        'X-Dev-Server-Key': _serverKey.text.trim(),
+      };
 
   /// A field that starts on what the last run left in it, and saves what is typed.
   TextEditingController _remembered(String key, String fallback) {
@@ -210,10 +219,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   /// Asks the dev server which cards it is holding.
+  ///
+  /// Says in the trace what came back, so a sheet with no saved card reads as either "the
+  /// server has none" or "the list did not load", not the same for both.
   Future<void> _loadCards() async {
     try {
       final answer = await http
-          .get(Uri.parse('${_server.text.trim()}/cards'))
+          .get(Uri.parse('${_server.text.trim()}/cards'),
+              headers: _serverHeaders)
           .timeout(const Duration(seconds: 10));
 
       final body = jsonDecode(answer.body) as Map<String, Object?>;
@@ -222,13 +235,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
           .map(_cardFrom)
           .toList();
 
+      _say('saved cards: ${cards.length}');
+
       if (mounted) {
         setState(() {
           _cards = cards;
           _cardsLoading = false;
         });
       }
-    } catch (_) {
+    } catch (error) {
+      _say('saved cards did not load, showing the last list: $error');
+
       if (mounted) {
         setState(() => _cardsLoading = false);
       }
@@ -259,68 +276,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return CardBrand.unknown;
   }
 
-  /// Puts the issuer's challenge in a sheet of the app's own, and settles on what it says.
-  ///
-  /// `GetPayInCheckout.open` cannot raise this one: it takes the one-checkout-at-a-time
-  /// guard, and the payment sheet is holding that guard for as long as it is open — so a
-  /// step-up asked for from inside `chargeSavedCard` would be refused as busy, which is
-  /// the rule blocking the second leg of the checkout it belongs to.
-  ///
-  /// `GetPayInCheckoutView` is a widget rather than a session: it claims nothing, reads
-  /// the return link with the same rules the hosted checkout does, and can therefore be
-  /// drawn inside a checkout that is already running. The sheet it sits in is the app's,
-  /// which is why this file owns the chrome and the way out.
-  Future<CheckoutResult> _confirmWithIssuer(
-    String challenge,
-    Object? invoiceId,
-  ) async {
-    final answer = await showModalBottomSheet<CheckoutResult>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      isDismissible: false,
-      enableDrag: false,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (sheet) => FractionallySizedBox(
-        heightFactor: 0.94,
-        child: Column(
-          children: <Widget>[
-            _ChallengeBar(onClose: () => Navigator.of(sheet).pop()),
-            Expanded(
-              child: GetPayInCheckoutView(
-                checkoutUrl: challenge,
-                returnUrl: returnUrl,
-                expectedInvoiceId: invoiceId,
-                onComplete: (result) => Navigator.of(sheet).pop(result),
-                onLoadError: (message, detail) =>
-                    _say('challenge could not load: $message'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    _say('challenge ${answer == null ? 'closed' : answer.status.name}');
-
-    return answer ?? _unfinishedChallenge;
-  }
-
-  /// What a challenge the payer walked away from means.
-  ///
-  /// Not cancelled: the charge is with the gateway by the time an issuer asks anything, so
-  /// the one thing this is not is a payment that never happened.
-  static const CheckoutResult _unfinishedChallenge = CheckoutResult(
-    status: CheckoutStatus.notPaid,
-    code: CheckoutResultCode.outcomeUnknown,
-    message:
-        'The bank step was closed before it finished. Read the invoice before '
-        'charging again.',
-  );
-
   /// Takes a vaulted card out of use, which only the server can do.
   ///
   /// A payer removing a saved card is `POST /api/v2/integration/tokens/revoke`, signed
@@ -339,16 +294,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final answer = await http
           .post(
             Uri.parse('${_server.text.trim()}/revoke'),
-            headers: const <String, String>{'Content-Type': 'application/json'},
-            body: jsonEncode(<String, Object?>{
-              'card_token': card.id,
-              if (_baseUrl.text.trim().isNotEmpty)
-                'base_url': _baseUrl.text.trim(),
-              if (_publicToken.text.trim().isNotEmpty)
-                'public_token': _publicToken.text.trim(),
-              if (_hashToken.text.trim().isNotEmpty)
-                'hash_token': _hashToken.text.trim(),
-            }),
+            headers: _serverHeaders,
+            body: jsonEncode(<String, Object?>{'card_token': card.id}),
           )
           .timeout(const Duration(seconds: 20));
 
@@ -409,12 +356,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   /// Charges a card the payer picked, which only the server can do.
+  ///
+  /// A refusal from the server is a decline the payer can try another card after. A server
+  /// error is not: it can arrive after the charge went out, from a server that charged the
+  /// card and then failed, so it is reported as a payment nobody can confirm.
   Future<CheckoutResult> _chargeSaved(SavedCard card) async {
     _say('charging saved card ${card.last4}');
 
     final answer = await http.post(
       Uri.parse('${_server.text.trim()}/charge'),
-      headers: const <String, String>{'Content-Type': 'application/json'},
+      headers: _serverHeaders,
       body: jsonEncode(<String, Object?>{
         'card_token': card.id,
         'amount': _amount.text.trim(),
@@ -424,13 +375,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
         // address: a bank's page is HTTPS and a browser will not carry its answer down to
         // plain HTTP.
         'public_base': _publicBase,
-        if (_baseUrl.text.trim().isNotEmpty) 'base_url': _baseUrl.text.trim(),
-        if (_publicToken.text.trim().isNotEmpty)
-          'public_token': _publicToken.text.trim(),
-        if (_hashToken.text.trim().isNotEmpty)
-          'hash_token': _hashToken.text.trim(),
       }),
     );
+
+    if (answer.statusCode >= 500) {
+      return _unconfirmed(answer.statusCode);
+    }
 
     final body = jsonDecode(answer.body) as Map<String, Object?>;
 
@@ -440,20 +390,28 @@ class _CheckoutPageState extends State<CheckoutPage> {
     if (body['challenge_url'] case final String challenge) {
       _say('issuer wants the payer: $challenge');
 
-      return _confirmWithIssuer(challenge, body['invoice_id']);
-    }
-
-    if (answer.statusCode >= 300) {
-      return CheckoutResult(
-        status: CheckoutStatus.notPaid,
-        message: '${body['error'] ?? 'The saved card could not be charged.'}',
+      return readSavedCardChallenge(
+        await GetPayInCheckout.open(
+          challenge,
+          OpenCheckoutOptions(
+            returnUrl: returnUrl,
+            expectedInvoiceId: body['invoice_id'],
+            title: _title.text.trim(),
+          ),
+        ),
       );
     }
 
-    return CheckoutResult(
-      status: CheckoutStatus.paid,
-      message: '${body['message'] ?? 'Charged the saved card.'}',
-    );
+    return readSavedCardCharge(body);
+  }
+
+  /// A saved-card charge whose answer was a server error, so nobody knows how it ended.
+  ///
+  /// Read the invoice before charging again: the server may have charged the card first.
+  CheckoutResult _unconfirmed(int status) {
+    _say('charge answered $status: the outcome is unknown');
+
+    return unconfirmedSavedCardCharge();
   }
 
   @override
@@ -463,9 +421,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _email.dispose();
     _title.dispose();
     _amount.dispose();
-    _baseUrl.dispose();
-    _publicToken.dispose();
-    _hashToken.dispose();
+    _serverKey.dispose();
     _server.dispose();
     _fieldsPage.dispose();
     super.dispose();
@@ -522,11 +478,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'keepCard=$_keepCard  googlePayInApp=$_googlePayInApp');
     _say('platform ${defaultTargetPlatform.name}  opens in: $_presentation');
     _say('server: ${_server.text.trim()}');
-    _say(
-        'base url: ${_baseUrl.text.trim().isEmpty ? "the server's own" : _baseUrl.text.trim()}');
-    _say('tokens overridden: '
-        'public=${_publicToken.text.trim().isNotEmpty} '
-        'hash=${_hashToken.text.trim().isNotEmpty}');
+    _say('server key given: ${_serverKey.text.trim().isNotEmpty}');
 
     if (_useSheet) {
       _say('fields page: ${_fieldsPage.text.trim()}');
@@ -555,6 +507,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       _say('surface: ${onTheSheet ? 'payment sheet' : 'hosted checkout'}');
 
+      if (onTheSheet) {
+        // Asked each time, not once: a card kept on the last payment reaches the server by
+        // webhook, after that payment's sheet has closed.
+        await _loadCards();
+      }
+
       final result = onTheSheet
           ? await _showSheet(session)
           : await _openHostedCheckout(payment, session);
@@ -573,7 +531,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _failure = '$error';
     } finally {
       _rememberTrace();
-      unawaited(_loadCards());
 
       if (mounted) {
         setState(() {
@@ -667,7 +624,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Future<_Payment> _createPayment() async {
     final answer = await http.post(
       Uri.parse(_server.text.trim()),
-      headers: const <String, String>{'Content-Type': 'application/json'},
+      headers: _serverHeaders,
       body: jsonEncode(<String, Object?>{
         'first_name': _firstName.text.trim(),
         'last_name': _lastName.text.trim(),
@@ -678,11 +635,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'hosted_fields': _useSheet,
         'tokenize': _keepCard,
         if (_keepCard) 'tokenization_consent_text': cardSaveConsent,
-        if (_baseUrl.text.trim().isNotEmpty) 'base_url': _baseUrl.text.trim(),
-        if (_publicToken.text.trim().isNotEmpty)
-          'public_token': _publicToken.text.trim(),
-        if (_hashToken.text.trim().isNotEmpty)
-          'hash_token': _hashToken.text.trim(),
       }),
     );
 
@@ -730,10 +682,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  /// Opens the integration the dev server should sign this payment with.
+  /// Opens the test server's key.
   ///
-  /// Left empty, the server uses the credentials on the machine it runs on, which is how it
-  /// has always worked and the only way that keeps the hash token off the phone entirely.
+  /// The server signs with the credentials on the machine it runs on and takes none from
+  /// the phone, so the hash token never comes near it. The key is what keeps anything else
+  /// on the network from asking that server for payments and charges.
   Future<void> _openSettings() {
     return showModalBottomSheet<void>(
       context: context,
@@ -754,34 +707,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             const Text(
-              'Integration',
+              'Test server',
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             const Text(
-              'Sent to the dev server, which signs with these instead of its own. '
-              'Leave a field empty to keep what the server already has.',
+              'The key the test server printed when it started. The server signs with '
+              'its own credentials, so no token is typed here.',
               style: TextStyle(fontSize: 14, color: Color(0xFF6D6E78)),
             ),
             const SizedBox(height: 16),
             _Field(
-              label: 'Base URL',
-              controller: _baseUrl,
-              enabled: true,
-              keyboard: TextInputType.url,
-              hint: 'https://pay.getpayin.com',
-            ),
-            _Field(
-              label: 'Authentication token',
-              controller: _publicToken,
-              enabled: true,
-            ),
-            _Field(
-              label: 'Hash token',
-              controller: _hashToken,
+              label: 'Server key',
+              controller: _serverKey,
               enabled: true,
               obscure: true,
-              hint: 'Held in memory only, never written to the phone',
+              hint: 'Kept on this phone with the server address',
             ),
             SizedBox(
               width: double.infinity,
@@ -1122,48 +1063,6 @@ class _Card extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
-      ),
-    );
-  }
-}
-
-/// The bar over the issuer's page, which is the only chrome it gets.
-///
-/// A way out is not optional: the challenge is the issuer's page, it can fail to load or
-/// hang on a network nobody controls, and a sheet with no close button would strand the
-/// payer on it with a charge already out.
-class _ChallengeBar extends StatelessWidget {
-  const _ChallengeBar({required this.onClose});
-
-  /// Called when the payer gives up on the bank.
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: hairline)),
-      ),
-      child: Row(
-        children: <Widget>[
-          const Expanded(
-            child: Text(
-              'Your bank',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF30313D),
-              ),
-            ),
-          ),
-          IconButton(
-            onPressed: onClose,
-            icon: const Icon(Icons.close_rounded),
-            color: muted,
-            tooltip: 'Close',
-          ),
-        ],
       ),
     );
   }

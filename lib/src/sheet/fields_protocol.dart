@@ -19,7 +19,8 @@ class FieldsReady extends FieldsEvent {
   /// Creates the ready event.
   const FieldsReady({required this.amountMinor, required this.currency});
 
-  /// What will be charged, in the currency's minor units, after any conversion.
+  /// What will be charged, after any conversion, in hundredths whatever the currency (see
+  /// `formatAmount`).
   final int amountMinor;
 
   /// The currency it will be charged in.
@@ -92,7 +93,16 @@ class FieldsPayment extends FieldsEvent {
     this.invoiceId,
     this.paidStatus,
     this.returnUrl,
+    this.attempt,
   });
+
+  /// The code the host sent with the charge this answers, as the page sent it back.
+  ///
+  /// The channel is shared with every frame the page holds, the issuer's challenge among
+  /// them, and no platform names who posted a message. The code is handed to the page
+  /// itself, which a frame from another site cannot read, so an answer that does not carry
+  /// it is not the answer to the charge the host sent.
+  final String? attempt;
 
   /// Whether the charge was approved.
   final bool success;
@@ -116,13 +126,19 @@ class FieldsPayment extends FieldsEvent {
 /// The attempt could not be completed.
 class FieldsError extends FieldsEvent {
   /// Creates the error event.
-  const FieldsError({required this.failure, this.message});
+  const FieldsError({required this.failure, this.message, this.attempt});
 
   /// What went wrong, and whether the payer has to go to the hosted checkout.
   final FieldsFailure failure;
 
   /// Text for the payer, when the page had any.
   final String? message;
+
+  /// The code of the charge this failure came during, as the page sent it back.
+  ///
+  /// A failure ends the charge and frees the sheet, so while one runs the box takes only a
+  /// failure carrying its code, for the same reason as [FieldsPayment.attempt].
+  final String? attempt;
 }
 
 /// The wallet button is rendered and can be tapped.
@@ -184,10 +200,12 @@ FieldsEvent? parseFieldsEvent(String raw) {
         invoiceId: _scalarAt(decoded, 'invoiceId'),
         paidStatus: _stringAt(decoded, 'paidStatus'),
         returnUrl: _stringAt(decoded, 'returnUrl'),
+        attempt: _stringAt(decoded, 'attempt'),
       ),
     'error' => FieldsError(
         failure: FieldsFailure.fromCode(_stringAt(decoded, 'code')),
         message: _stringAt(decoded, 'message'),
+        attempt: _stringAt(decoded, 'attempt'),
       ),
     'walletready' => FieldsWalletReady(
         (decoded['paymentTypes'] as List<Object?>? ?? const <Object?>[])
@@ -197,6 +215,21 @@ FieldsEvent? parseFieldsEvent(String raw) {
     'walleterror' => FieldsWalletError(message: _stringAt(decoded, 'message')),
     _ => null,
   };
+}
+
+/// The key a message from the fields page carries, or null when it carries none.
+///
+/// Never throws, like [parseFieldsEvent]: a message nobody can read has no key either.
+String? fieldsPageKeyOf(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+
+    return decoded is Map<String, Object?>
+        ? _stringAt(decoded, 'pageKey')
+        : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /// Turns the charge PayLink reported into a result, by the rules every claim goes through.
@@ -280,11 +313,15 @@ String describeFieldsEvent(FieldsEvent event) {
 /// page is hosted once and a payment knows which PayLink it belongs to, so the host says
 /// which one rather than the page deciding when it was generated — a page pinned to one
 /// environment and a token minted on another fails with an error naming the wrong system.
+///
+/// [pageKey] is a code the page puts on every message it sends back. The channel carries
+/// messages from everything the page frames, and only the page itself was handed the key.
 String startFieldsCommand({
   required String clientToken,
   required Map<String, Object?> style,
   List<String> wallets = const <String>[],
   String? sdkUrl,
+  String? pageKey,
   bool collectName = false,
   bool collectConsent = false,
   String nameLabel = 'Name on card',
@@ -295,6 +332,7 @@ String startFieldsCommand({
   final config = jsonEncode(<String, Object?>{
     'clientToken': clientToken,
     if (sdkUrl != null) 'sdkUrl': sdkUrl,
+    if (pageKey != null) 'pageKey': pageKey,
     'wallets': wallets,
     'style': style,
     'collectName': collectName,
@@ -305,7 +343,9 @@ String startFieldsCommand({
     'securityCodeLabel': securityCodeLabel,
   });
 
-  return 'window.__paylinkHost && window.__paylinkHost.start($config);';
+  // Answers whether the page had the card page's script to start, so a host that runs it for
+  // its result can tell the card page from any other page at the same address.
+  return '!!(window.__paylinkHost && (window.__paylinkHost.start($config), true));';
 }
 
 /// The JavaScript that takes the fields down.
@@ -325,11 +365,19 @@ String destroyCommand() =>
 /// sheet, the gateway's token holds no address of its own, and the page has nothing to add
 /// to one. Null for an address the charge would ignore, so the page is told the same thing
 /// in both cases rather than having to decide.
-String payCommand({BillingDetails? billing, bool keepTheCard = false}) {
+///
+/// [attempt] is the code the page sends back with the answer, so the host can tell the
+/// answer to this charge from a message anything else on the channel posted.
+String payCommand({
+  BillingDetails? billing,
+  bool keepTheCard = false,
+  String? attempt,
+}) {
   final wire = billing?.toWire() ?? const <String, Object?>{};
   final asked = <String, Object?>{
     if (wire.isNotEmpty) 'billing': wire,
     if (keepTheCard) 'tokenize': true,
+    if (attempt != null) 'attempt': attempt,
   };
 
   final argument = asked.isEmpty ? 'null' : jsonEncode(asked);

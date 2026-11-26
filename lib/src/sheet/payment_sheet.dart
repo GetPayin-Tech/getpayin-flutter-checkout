@@ -1,15 +1,18 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 // Material moved to package:material_ui after Flutter 3.47, which does not exist in the
 // older versions this package still supports. The import stays until the floor moves.
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 import '../checkout.dart';
+import '../core/invoice_id.dart';
 import '../core/messages.dart';
 import '../core/session_guard.dart';
 import '../core/return_url.dart';
+import '../core/validate.dart';
 import '../platform.dart';
 import '../types.dart';
 import 'amount.dart';
@@ -118,7 +121,24 @@ class PaymentSheetConfiguration {
   final Duration successPause;
 
   /// The invoice this payment is for, so a result naming another one is refused.
+  ///
+  /// Left out, the invoice `/init` reported for [session] is used: the session already
+  /// names it. A saved card's charge is not held to either: your server's charge on a
+  /// token makes an invoice of its own. See [chargeSavedCard].
+  ///
+  /// A value that is not an invoice id — empty text, a fraction — makes
+  /// [GetPayInPaymentSheet.show] throw a [GetPayInConfigError] before the sheet opens, as
+  /// [GetPayInCheckout.open] does: held to it, every payment would be refused.
   final Object? expectedInvoiceId;
+
+  /// The invoice the card box, the wallet and the hosted fallback are held to.
+  ///
+  /// The session's own invoice only when it can be read: `/init` reaches the app through
+  /// the integrator's server, and an id nobody can read would refuse every payment that
+  /// went through and stop the hosted fallback from opening.
+  Object? get _invoiceToBind =>
+      expectedInvoiceId ??
+      (invoiceIdFrom(session.invoiceId) == null ? null : session.invoiceId);
 
   /// What to show on the pay button until the gateway has priced the payment.
   final String? amountLabel;
@@ -134,6 +154,16 @@ class PaymentSheetConfiguration {
   /// This is a call your server makes — charging a token is signed with your hash token,
   /// which never reaches the app — so the sheet hands you the card the payer picked and
   /// waits for what your server answers.
+  ///
+  /// When the issuer wants to challenge the payer, your server gets a URL for it, and this
+  /// can open it with [GetPayInCheckout.open] and return what that settles with. The sheet
+  /// lends that one checkout its place in the one-checkout-at-a-time guard.
+  ///
+  /// What it returns is a claim of payment, held to the rule every other one is: a `paid`
+  /// naming an [CheckoutResult.invoiceStatus] other than `PAID` is not paid, and a `paid`
+  /// without one is taken as it stands. So return the invoice your server's charge made,
+  /// with its id and status as PayLink answered. Past that rule the sheet takes the result
+  /// as your server reports it: your server confirms the charge.
   final Future<CheckoutResult> Function(SavedCard card)? chargeSavedCard;
 
   /// Other schemes this app answers to, refused like the return link's own.
@@ -149,13 +179,15 @@ class PaymentSheetConfiguration {
   ///
   /// On by default, and the reason the sheet can be used without a second thought: a
   /// company without hosted fields, an expired client token, a page on the wrong origin or
-  /// a payment that saves a card all end with the payer paying rather than stuck.
+  /// a subscription the fields cannot take all end with the payer paying rather than stuck.
+  /// A sale that also keeps the card is not among them: the sheet takes it, see
+  /// [keepTheCard].
   final bool fallBackToHostedCheckout;
 
   /// The hosted checkout this payment falls back to.
   OpenCheckoutOptions get hostedOptions => OpenCheckoutOptions(
         returnUrl: returnUrl,
-        expectedInvoiceId: expectedInvoiceId,
+        expectedInvoiceId: _invoiceToBind,
         ownSchemes: ownSchemes,
       );
 }
@@ -167,12 +199,23 @@ class PaymentSheetConfiguration {
 /// gateway; they sit in a box this sheet owns, on a page you host at your registered origin.
 /// Every call behind it goes to PayLink: the capture context, payer authentication and the
 /// charge are PayLink's endpoints, signed by a client token that names one payment.
+///
+/// Open it with [show]. The sheet ends by closing its own route, which is how it hands back
+/// what the payment ended with, so it has no constructor to place it on a screen of your own:
+/// there it would close your screen, and nobody would receive the result. A layout of your
+/// own is built from the same pieces instead, as the payment sheet guide describes.
 class GetPayInPaymentSheet extends StatefulWidget {
-  /// Creates the sheet.
-  const GetPayInPaymentSheet({required this.configuration, super.key});
+  /// Creates the sheet [show] presents, which tells it what an empty pop meant.
+  const GetPayInPaymentSheet._shown({
+    required this.configuration,
+    required _SheetExit exit,
+  }) : _exit = exit;
 
   /// The payment this sheet is taking.
   final PaymentSheetConfiguration configuration;
+
+  /// Where the sheet keeps what a pop with no result means, for [show] to read.
+  final _SheetExit _exit;
 
   /// Opens the hosted checkout, having told the integrator why the sheet could not.
   static Future<CheckoutResult> _handOver(
@@ -199,11 +242,21 @@ class GetPayInPaymentSheet extends StatefulWidget {
   /// It holds the one-checkout-at-a-time guard while it is open, so a second sheet is
   /// refused and [GetPayInCheckout.busy] is true — which is what integrators are told to
   /// gate their pay button on. The guard is released before the hosted fallback opens,
-  /// because that is a checkout of its own and takes the guard itself.
+  /// because that is a checkout of its own and takes the guard itself, and it is lent to
+  /// the one checkout `chargeSavedCard` opens for an issuer's challenge.
+  ///
+  /// A pop the app makes in code cannot be refused and carries no result, so the sheet
+  /// says what it would have meant: unconfirmed while anything is in flight, the payment
+  /// once the sheet has one, cancelled otherwise.
   static Future<CheckoutResult> show(
     BuildContext context,
     PaymentSheetConfiguration configuration,
   ) async {
+    assertExpectedInvoiceId(configuration.expectedInvoiceId);
+    assertReturnUrl(configuration.returnUrl);
+    assertCheckoutUrl(configuration.session.checkoutUrl);
+
+    final exit = _SheetExit();
     final outcome = await checkoutGuard.run(
       () => showModalBottomSheet<_SheetOutcome>(
         context: context,
@@ -211,19 +264,32 @@ class GetPayInPaymentSheet extends StatefulWidget {
         backgroundColor: const Color(0x00000000),
         barrierColor: const Color(0x66000000),
         enableDrag: false,
-        builder: (_) => GetPayInPaymentSheet(configuration: configuration),
+        builder: (_) => GetPayInPaymentSheet._shown(
+          configuration: configuration,
+          exit: exit,
+        ),
       ),
     );
 
     return switch (outcome) {
       _Settled(:final result) => result,
       _Fallback(:final error) => _handOver(configuration, error),
-      null => cancelledResult(closedByPayerMessage),
+      null => exit.meaning?.call() ?? cancelledResult(closedByPayerMessage),
     };
   }
 
   @override
   State<GetPayInPaymentSheet> createState() => _GetPayInPaymentSheetState();
+}
+
+/// What a pop of the sheet's route with no result means, as the sheet last knew it.
+///
+/// Back and a tap outside are refused while anything is in flight, but a pop the app makes
+/// in code — a sign-out that resets the screens, a `popUntil` — cannot be, and it carries
+/// no result. Read once, as the route is popped, while the sheet is still mounted.
+class _SheetExit {
+  /// Answers what an empty pop means right now.
+  CheckoutResult Function()? meaning;
 }
 
 /// What the sheet closed with.
@@ -255,8 +321,26 @@ enum _Screen { methods, selectCard, newCard, done }
 /// page on a short one.
 const double _challengeShareOfScreen = 0.85;
 
-/// What the sheet spends on itself around the challenge: its own padding and the safe area.
-const double _sheetChrome = 48;
+/// How tall the row with the close control above the challenge is.
+///
+/// Fixed, so the box under it can be sized from the room that is left.
+const double _closeRowHeight = 40;
+
+/// How long the sheet waits for a wallet's charge to start once the payer is back from the
+/// wallet's own sheet.
+///
+/// Measured on an Android emulator against PayLink's sandbox: the page marked its charge
+/// 4.0 and 4.4 seconds after Google Pay's sheet had closed. The wait is several times that,
+/// because a payer on a slow network is the one most likely to press Back while nothing
+/// seems to happen.
+const Duration _walletGrace = Duration(seconds: 15);
+
+/// How recent a touch on the wallet button has to be for the app leaving to count as the
+/// payer opening the wallet.
+///
+/// Google Pay's sheet opened 0.6 seconds after the touch on the emulator; a slow phone takes
+/// longer. Anything else the payer leaves for — a notification, a call — holds nothing.
+const Duration _walletTouchWindow = Duration(seconds: 10);
 
 class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   late final PaymentSheetConfiguration _config = widget.configuration;
@@ -275,6 +359,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     onPayment: _onPayment,
     onFailure: _onFieldsFailure,
     onEvent: _report,
+    onRefused: _config.onDiagnostic,
   );
 
   late final BillingFieldSet _billing =
@@ -288,10 +373,81 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// gets a new surface rather than a reset latch.
   int _walletAttempt = 0;
 
+  /// True from the page's mark that the wallet's charge is out until the wallet answers.
+  bool _walletCharging = false;
+
+  /// True while the wallet's page shows the issuer's 3-D Secure check.
+  ///
+  /// The check comes after the payer has approved the wallet and before the charge, and the
+  /// issuer may yet pass it, so the sheet holds as it does for the card's check, and gives
+  /// the wallet's page the room the check needs.
+  bool _walletChallenge = false;
+
+  /// True from the app going behind the wallet's own sheet until the wallet's charge is
+  /// out, the wallet answers, or [_walletGrace] has passed since the payer came back.
+  ///
+  /// The page marks its charge only once the gateway has turned the wallet's answer into a
+  /// token, seconds after the wallet's sheet has closed, and it cannot see that sheet at
+  /// all. The app can, because the wallet puts it in the background. Without this hold, Back
+  /// in those seconds reported a payment that went through as cancelled.
+  bool _walletOpen = false;
+
+  /// True from the payer opening the wallet until the wallet answers.
+  ///
+  /// A payer who dismisses the wallet leaves nothing on the page to say so, which is why the
+  /// hold lets go on a timer. A wallet slower than that can still charge, so leaving the
+  /// sheet after a wallet that never answered is reported unconfirmed, never cancelled.
+  bool _walletUnanswered = false;
+
+  /// True once a wallet charge went out that the sheet was not holding for.
+  ///
+  /// Its button had already left the screen, or was leaving it because another payment had
+  /// started in the same instant, so the wallet's answer has nowhere to arrive. Whatever the
+  /// sheet reports after that could hide a second payment, so it reports unconfirmed.
+  bool _walletStray = false;
+
+  /// A failure that means the card box cannot run, kept while another payment is in flight.
+  ///
+  /// The box loads behind the first screen, so it can fail while the wallet or a saved card
+  /// is charging. Handing the payer over then would open a second way to pay for the same
+  /// order, and `checkoutUnavailable` would say nothing was charged. It is acted on once
+  /// that payment has ended without one.
+  FieldsError? _heldFailure;
+
+  /// Ends the hold on a wallet whose charge has not started since the payer came back.
+  Timer? _walletRelease;
+
+  /// True for [_walletTouchWindow] after a touch on the wallet button.
+  ///
+  /// The page cannot say the button was tapped: the button is the gateway's, in a frame of
+  /// its own. The touch passes through the sheet first, so the sheet notes it there.
+  bool _walletTouched = false;
+
+  /// Forgets the touch on the wallet button once it is too old to explain the app leaving.
+  Timer? _walletTouchExpiry;
+
+  /// Tells the sheet when the app goes behind a wallet's own sheet, and when it is back.
+  late final AppLifecycleListener _lifecycle;
+
   _Screen _screen = _Screen.methods;
   SavedCard? _selected;
   bool _charging = false;
   String? _error;
+
+  /// The payment the sheet is showing as gone through, before it closes on it.
+  ///
+  /// Once there is one, nothing after it changes what the app is told: a late message from
+  /// the page, a late answer from your server, or the payer leaving the success screen.
+  CheckoutResult? _answer;
+
+  /// True once the sheet's route is on its way out, by its own close or anyone's pop.
+  ///
+  /// The sheet stays mounted while it animates away, so an answer can still arrive; a
+  /// second pop then would take the app's own screen under the sheet with it.
+  bool _closed = false;
+
+  /// True once nothing more may change what the sheet reports.
+  bool get _finished => _closed || _answer != null || !mounted;
 
   @override
   void initState() {
@@ -299,10 +455,15 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     _selected =
         _config.savedCards.where((card) => !card.hasExpired).firstOrNull;
     _card.addListener(_onCardChanged);
+    widget._exit.meaning = _resultOfLeaving;
+    _lifecycle = AppLifecycleListener(onStateChange: _onLifecycle);
   }
 
   @override
   void dispose() {
+    _walletRelease?.cancel();
+    _walletTouchExpiry?.cancel();
+    _lifecycle.dispose();
     _card.removeListener(_onCardChanged);
     _card.dispose();
     _billing.dispose();
@@ -316,39 +477,210 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       _config.onDiagnostic?.call(describeFieldsEvent(event));
 
   void _onPayment(FieldsPayment payment) {
-    _settle(resultFromPayment(payment,
-        expectedInvoiceId: _config.expectedInvoiceId));
+    _settle(
+        resultFromPayment(payment, expectedInvoiceId: _config._invoiceToBind));
   }
 
-  /// True once the gateway has the charge, whatever it does with it next.
+  /// True from when the gateway has the charge until it answers.
   ///
-  /// From here on nothing the page reports can mean "nothing was charged": the answer may
+  /// In between, nothing the page reports can mean "nothing was charged": the answer may
   /// simply not have come back.
   bool get _chargeIsOut => _card.chargeStarted;
 
   /// True while closing the sheet would lose the answer to something already under way.
   ///
-  /// A charge the gateway has, a saved card your own server is charging, or an issuer's
-  /// challenge the payer is partway through. Each can finish after the sheet would have
-  /// closed, and reporting that as cancelled reports a payment that may well have gone
-  /// through as one that did not.
-  bool get _isSettling => _chargeIsOut || _charging || _card.isAuthenticating;
+  /// An attempt the card box is running, from the tap on Pay — the SDK asks the issuer and
+  /// then charges, and goes on doing both after the sheet has gone — a charge the gateway
+  /// has, a saved card your own server is charging, a wallet the payer has opened or whose
+  /// charge the page has sent, or an issuer's challenge the payer is partway through, on the
+  /// card or on the wallet. Each can finish after the sheet would have closed, and reporting
+  /// that as cancelled reports a payment that may well have gone through as one that did not.
+  bool get _isSettling =>
+      _card.isCharging ||
+      _card.isAuthenticating ||
+      _chargeIsOut ||
+      _charging ||
+      _walletCharging ||
+      _walletOpen ||
+      _walletChallenge;
 
-  void _onFieldsFailure(FieldsError error) {
-    if (_chargeIsOut) {
-      _settle(
-        CheckoutResult(
-          status: CheckoutStatus.notPaid,
-          code: CheckoutResultCode.outcomeUnknown,
-          message: error.message ?? _config.strings.outcomeUnknown,
-        ),
+  /// True while a payment the card box is not running is in flight: a saved card, or a
+  /// wallet the payer has opened, whose issuer's check is up, or whose charge is out.
+  bool get _anotherPaymentIsOut =>
+      _charging || _walletCharging || _walletOpen || _walletChallenge;
+
+  /// The wallet the sheet shows right now, if any.
+  ///
+  /// Taken away while anything else is in flight, because it is one tap from a second
+  /// charge, and kept while its own payment is, because its surface is where that runs.
+  PaymentWallet? get _walletShown => _walletUnavailable ||
+          (_isSettling && !_walletCharging && !_walletOpen && !_walletChallenge)
+      ? null
+      : PaymentWallet.forPlatform(currentPlatformName(), _config.wallets);
+
+  /// True once the wallet's page has said it cannot show the wallet.
+  bool _walletUnavailable = false;
+
+  /// Takes the wallet away for good once its page says it cannot show it.
+  ///
+  /// It is never told so after the wallet's charge is marked, so nothing was charged through
+  /// it, and a row left in place is empty space a touch on would still count as opening a
+  /// wallet. A payer already in the wallet stays held as for any wallet that never answered.
+  void _onWalletUnavailable() {
+    if (_finished) {
+      return;
+    }
+
+    _config.onDiagnostic?.call(
+      'wallet unavailable: its page could not show it (a page that did not load, '
+      'an SDK address it was not made for, or no wallet on this phone)',
+    );
+    setState(() => _walletUnavailable = true);
+  }
+
+  /// Notes a touch on the wallet button, for [_onLifecycle] to read.
+  void _onWalletTouched() {
+    _walletTouched = true;
+    _walletTouchExpiry?.cancel();
+    _walletTouchExpiry =
+        Timer(_walletTouchWindow, () => _walletTouched = false);
+  }
+
+  /// Holds the sheet while the payer is in the wallet's own sheet, and for a while after.
+  ///
+  /// Any state but resumed counts as leaving, as it does for the browser checkout: Android
+  /// pauses the app behind Google Pay, iOS makes it inactive behind Apple Pay. It counts as
+  /// the wallet only on the screen that shows it, and only right after a touch on its
+  /// button, so a payer who pulls down a notification, takes a call or switches apps to copy
+  /// a card number is held by nothing and can still cancel.
+  void _onLifecycle(AppLifecycleState state) {
+    if (_finished) {
+      return;
+    }
+
+    if (state != AppLifecycleState.resumed) {
+      if (_screen != _Screen.methods ||
+          _walletShown == null ||
+          _walletCharging ||
+          !_walletTouched) {
+        return;
+      }
+
+      _walletRelease?.cancel();
+      setState(() {
+        _walletOpen = true;
+        _walletUnanswered = true;
+        _error = null;
+      });
+
+      return;
+    }
+
+    if (_walletOpen) {
+      _walletRelease?.cancel();
+      _walletRelease = Timer(_walletGrace, _releaseWallet);
+    }
+  }
+
+  /// Lets the payer use the sheet again after a wallet that started no charge.
+  ///
+  /// Unless a wallet charge nobody was holding for came in while the payer was away: that
+  /// charge can still go through, so freeing the sheet now would let a second payment start.
+  void _releaseWallet() {
+    if (_finished) {
+      return;
+    }
+
+    setState(() => _walletOpen = false);
+
+    if (_walletStray) {
+      _settle(_unconfirmed);
+
+      return;
+    }
+
+    _takeHeldFailure();
+  }
+
+  /// What the sheet settles with when a charge may have gone through and nobody knows.
+  ///
+  /// Always the sheet's own words. What the page or your server said goes to the log: it
+  /// may well say to try another card, which is how one payment becomes two.
+  CheckoutResult get _unconfirmed => CheckoutResult(
+        status: CheckoutStatus.notPaid,
+        code: CheckoutResultCode.outcomeUnknown,
+        message: _config.strings.outcomeUnknown,
       );
+
+  /// What leaving the sheet right now means: the payment it is showing, unconfirmed while
+  /// anything is in flight or a wallet the payer opened has not answered, and cancelled
+  /// otherwise.
+  CheckoutResult _resultOfLeaving() =>
+      _answer ??
+      (_isSettling || _walletUnanswered || _walletStray
+          ? _unconfirmed
+          : cancelledResult(closedByPayerMessage));
+
+  /// Closes the sheet at the payer's own request.
+  ///
+  /// Always allowed, because a charge can hang and a sheet that cannot be closed then has to
+  /// be killed with the app. While something is in flight it is reported as unconfirmed,
+  /// never as cancelled.
+  void _closeByPayer() => _close(_Settled(_resultOfLeaving()));
+
+  /// Decides what a failure the card box reported means for this payment.
+  ///
+  /// After the charge left, or after a wallet charge nobody was holding for, nobody knows
+  /// whether this payer paid, so the sheet settles unconfirmed. Before that, a failure
+  /// about this attempt is shown for another try, and one that means the fields cannot run
+  /// hands the payer to the hosted checkout. Once the sheet has its answer, a failure
+  /// changes nothing.
+  ///
+  /// While another payment is in flight, the box is not what the payer is paying with. A
+  /// failure that means it cannot run waits for that payment's answer, and any other is
+  /// left to the box's own message: offering a retry would free the sheet mid-charge. That
+  /// includes PayLink saying the invoice is already paid, which is what the wallet's own
+  /// charge does to it: its answer says more than the box can.
+  ///
+  /// An invoice already paid with nothing else in flight settles unconfirmed: something
+  /// paid it, and the sheet cannot say what.
+  ///
+  /// After a wallet the payer opened that never answered, a failure that means the box
+  /// cannot run settles unconfirmed. That wallet can still charge, so the hosted checkout
+  /// would be a second way to pay, and `checkoutUnavailable` would say nothing was charged.
+  void _onFieldsFailure(FieldsError error) {
+    if (_finished) {
+      return;
+    }
+
+    if (_chargeIsOut || _walletStray) {
+      _settle(_unconfirmed);
+
+      return;
+    }
+
+    if (_anotherPaymentIsOut) {
+      if (error.failure.fatal) {
+        _heldFailure = error;
+      }
+
+      return;
+    }
+
+    if (error.failure == FieldsFailure.alreadyPaid) {
+      _settle(_unconfirmed);
 
       return;
     }
 
     if (!error.failure.sendsPayerToHostedCheckout) {
       _showRetryable(error.message ?? _config.strings.cardDeclined);
+
+      return;
+    }
+
+    if (_walletUnanswered) {
+      _settle(_unconfirmed);
 
       return;
     }
@@ -368,9 +700,26 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     _close(_Fallback(error));
   }
 
+  /// Ends the sheet on [result], or offers another try when it was a plain decline.
+  ///
+  /// Does nothing once the sheet has its answer or is closing: a charge can answer after the
+  /// payer closed it, and the sheet has already reported what it knew. After a wallet
+  /// charge nobody was holding for, any answer ends it unconfirmed: another try could be a
+  /// second payment, and a payment could be one of two.
   void _settle(CheckoutResult result) {
+    if (_finished) {
+      return;
+    }
+
+    if (_walletStray) {
+      _close(_Settled(_unconfirmed));
+
+      return;
+    }
+
     if (result.status == CheckoutStatus.notPaid && result.code == null) {
       _showRetryable(result.message ?? _config.strings.cardDeclined);
+      _takeHeldFailure();
 
       return;
     }
@@ -385,24 +734,68 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     _close(_Settled(result));
   }
 
+  /// Acts on a card-box failure kept while another payment was in flight, now that it has
+  /// ended without a payment.
+  void _takeHeldFailure() {
+    final held = _heldFailure;
+
+    _heldFailure = null;
+
+    if (held != null) {
+      _onFieldsFailure(held);
+    }
+  }
+
   /// Tells the payer the payment went through, then closes on the same result.
   ///
   /// The sheet is the last thing the payer sees of their own payment, and closing the
   /// moment the gateway answers reads as the sheet giving up rather than as it finishing.
   /// It is still only a report of what PayLink said, not proof: the webhook is that.
   void _sayItWentThrough(CheckoutResult result) {
-    setState(() => _screen = _Screen.done);
-
-    Future<void>.delayed(_config.successPause, () {
-      if (mounted) {
-        _close(_Settled(result));
-      }
+    setState(() {
+      _answer = result;
+      _screen = _Screen.done;
     });
+
+    Future<void>.delayed(_config.successPause, () => _close(_Settled(result)));
   }
 
+  /// Pops the sheet's route with [outcome], once.
+  ///
+  /// Only the sheet's own route. The billing form's country list is a route too, open over
+  /// the sheet, and a result can arrive while the payer is choosing: popping whatever is on
+  /// top would close the list with the sheet's outcome and leave the sheet up, with its close
+  /// already spent. Anything over the sheet goes first, with no answer.
+  ///
+  /// A route the app has already taken away, as a reset of its screens does, is left alone.
+  /// The app was told what leaving meant as the route went, and popping now would take the
+  /// app's own new screens with it.
   void _close(_SheetOutcome outcome) {
-    if (mounted) {
-      Navigator.of(context).pop(outcome);
+    if (!mounted || _closed) {
+      return;
+    }
+
+    _closed = true;
+
+    final sheet = ModalRoute.of(context);
+
+    if (sheet != null && !sheet.isActive) {
+      return;
+    }
+
+    final navigator = Navigator.of(context);
+
+    if (sheet != null) {
+      navigator.popUntil((route) => route == sheet);
+    }
+
+    navigator.pop(outcome);
+  }
+
+  /// Notes that the route was popped by something other than the sheet's own close.
+  void _onPopped(bool didPop, Object? _) {
+    if (didPop) {
+      _closed = true;
     }
   }
 
@@ -410,7 +803,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     final card = _selected;
     final charge = _config.chargeSavedCard;
 
-    if (card == null || charge == null || _charging) {
+    if (card == null || charge == null || _isSettling) {
       return;
     }
 
@@ -420,22 +813,168 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     });
 
     try {
-      _settle(await charge(card));
+      _settle(_asSavedCardAnswer(await checkoutGuard.lend(() => charge(card))));
     } catch (cause) {
       _reportChargeFailure(cause);
     }
   }
 
+  /// What a saved card's charge answered, read the way the sheet reads anything in flight.
+  ///
+  /// `cancelled` is never an answer to a charge your server has started. It is what an
+  /// issuer's challenge settles with when the payer closes it, and a payer can close it after
+  /// answering the issuer, with the charge already on its way; the sheet cannot tell the two
+  /// apart, so it reports neither as nothing having happened.
+  ///
+  /// Anything else is a claim of payment, and settles the way every other one does. A charge
+  /// on a token makes its own invoice, so it is not held to
+  /// [PaymentSheetConfiguration.expectedInvoiceId].
+  CheckoutResult _asSavedCardAnswer(CheckoutResult result) =>
+      result.status == CheckoutStatus.cancelled
+          ? _unconfirmed
+          : settlePaidClaim(result);
+
   /// Takes what the wallet answered, and offers it again if the payer can try once more.
   ///
   /// A wallet decline leaves the sheet open, so the surface that reported it has to go: it
-  /// has already latched, and the next answer would arrive to nobody.
+  /// has already latched, and the next answer would arrive to nobody. An answer that comes
+  /// after the sheet has its answer or is closing is dropped: it has already reported one.
   void _onWalletResult(CheckoutResult result) {
-    if (result.status == CheckoutStatus.notPaid && result.code == null) {
-      setState(() => _walletAttempt++);
+    if (_finished) {
+      return;
     }
 
+    final declined =
+        result.status == CheckoutStatus.notPaid && result.code == null;
+
+    _walletRelease?.cancel();
+    setState(() {
+      _walletCharging = false;
+      _walletOpen = false;
+      _walletChallenge = false;
+      _walletUnanswered = false;
+
+      if (declined) {
+        _walletAttempt++;
+      }
+    });
+
     _settle(result);
+  }
+
+  /// Holds the sheet still once the wallet page says its charge is out.
+  ///
+  /// The mark can arrive after the payer has left, from a surface still on its way out, and
+  /// a sheet that is finished has nothing to hold. A mark from a button the sheet is about
+  /// to take away, because the payer moved on or another payment has just started, is a
+  /// charge nobody is holding for.
+  void _onWalletCharging() {
+    if (_finished) {
+      return;
+    }
+
+    if (_screen != _Screen.methods || _walletShown == null) {
+      _noteStrayWalletCharge();
+
+      return;
+    }
+
+    _walletRelease?.cancel();
+    setState(() {
+      _walletCharging = true;
+      _walletOpen = false;
+      _walletChallenge = false;
+      _error = null;
+    });
+  }
+
+  /// Gives the wallet the whole sheet while the issuer's check is up on its page, and gives
+  /// the row back when the check has gone with no charge.
+  ///
+  /// While it is up the sheet holds, as for the card's check: the issuer may yet pass it and
+  /// the charge follow. A check passed is followed by the charge's own mark, which takes over
+  /// the hold. One that has gone with no charge is the wallet's answer for this attempt, so
+  /// the sheet is as it was before the wallet, unless a charge nobody was holding for came in
+  /// meanwhile, or a card-box failure was kept for after it.
+  ///
+  /// A check from a button the sheet is about to take away — the payer has just moved to
+  /// the card, or another payment has just started — is ignored. That page is emptied as the
+  /// button goes, before any charge, and taking the mark would bring the wallet back beside
+  /// the other payment, or hold a card screen that has no wallet on it.
+  void _onWalletChallenge(bool showing) {
+    if (_finished || (!showing && !_walletChallenge)) {
+      return;
+    }
+
+    if (showing && (_screen != _Screen.methods || _walletShown == null)) {
+      _config.onDiagnostic?.call(
+        'wallet check ignored: its button was leaving as another way to pay started',
+      );
+
+      return;
+    }
+
+    if (showing) {
+      _walletRelease?.cancel();
+      setState(() {
+        _walletChallenge = true;
+        _walletOpen = false;
+        _error = null;
+      });
+
+      return;
+    }
+
+    setState(() {
+      _walletChallenge = false;
+      _walletUnanswered = false;
+    });
+
+    if (_walletStray && !_isSettling) {
+      _settle(_unconfirmed);
+
+      return;
+    }
+
+    _takeHeldFailure();
+  }
+
+  /// Takes a mark from a wallet button that has already left the screen.
+  ///
+  /// Always a charge nobody is holding for, even with a new button in its place: the answer
+  /// would arrive on the old page, which is gone, so holding for the new one would hold for
+  /// an answer that never comes.
+  void _onWalletChargingAfterLeaving() {
+    if (_finished) {
+      return;
+    }
+
+    _noteStrayWalletCharge();
+  }
+
+  /// Notes a wallet charge nobody is holding for.
+  ///
+  /// The sheet ends unconfirmed on the next answer, when the hold on an opened wallet lets
+  /// go, or at once when nothing else is in flight.
+  void _noteStrayWalletCharge() {
+    _walletStray = true;
+
+    if (!_isSettling) {
+      _settle(_unconfirmed);
+    }
+  }
+
+  /// Moves the payer to [screen], unless a payment is in flight.
+  ///
+  /// Checked when the tap lands, not only when the row was drawn: the wallet page can mark
+  /// its charge in between, and leaving the wallet's screen then takes away the button its
+  /// answer arrives on.
+  void _openScreen(_Screen screen) {
+    if (_isSettling) {
+      return;
+    }
+
+    setState(() => _screen = screen);
   }
 
   /// Ends a saved-card charge whose answer never came.
@@ -444,27 +983,22 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// here is a network that went away rather than a card that was refused — and never
   /// offered as one: their server may have charged the card and then lost the answer, so
   /// "try another card" is how one payment becomes two. The sheet settles with a code that
-  /// says to read the invoice, and the cause goes to the log, where developer text belongs.
+  /// says to read the invoice, and in a debug build the cause goes to the log, where
+  /// developer text belongs. Only there: what your server threw can carry its own request,
+  /// and a release build's log is read by whoever can read the phone's.
   void _reportChargeFailure(Object cause) {
-    debugPrint('GetPayIn payment sheet: $cause');
-    _settle(
-      CheckoutResult(
-        status: CheckoutStatus.notPaid,
-        code: CheckoutResultCode.outcomeUnknown,
-        message: _config.strings.outcomeUnknown,
-      ),
-    );
+    if (kDebugMode) {
+      debugPrint('GetPayIn payment sheet: $cause');
+    }
+
+    _settle(_unconfirmed);
   }
 
   /// Shows the payer what went wrong with this attempt, and lets them make another.
   ///
-  /// Guarded on `mounted`: a charge can answer after the payer has closed the sheet, and a
-  /// sheet that is gone has nothing to show.
+  /// Its callers have already checked the sheet is not finished: a charge can answer after
+  /// the payer has closed the sheet, and a sheet that is gone has nothing to show.
   void _showRetryable(String message) {
-    if (!mounted) {
-      return;
-    }
-
     setState(() {
       _charging = false;
       _error = message;
@@ -491,18 +1025,36 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   double _tallestIn(BuildContext context) {
     final media = MediaQuery.of(context);
 
+    // The bottom inset, the home indicator's, is drawn inside the sheet but outside this
+    // limit, so it comes off too. With the keyboard up it is zero: the keyboard covers it.
     return math.max(
       240,
-      media.size.height - media.viewInsets.bottom - media.padding.top - 24,
+      media.size.height -
+          media.viewInsets.bottom -
+          media.padding.bottom -
+          _statusBarIn(context) -
+          24,
     );
+  }
+
+  /// The top of the screen the phone keeps for itself: the status bar, a notch, an island.
+  ///
+  /// Read from the view rather than the sheet's own media query: a modal bottom sheet's
+  /// route takes the top inset out of that, so the sheet would be told there is none and
+  /// grow up under the status bar.
+  double _statusBarIn(BuildContext context) {
+    final view = View.of(context);
+
+    return view.padding.top / view.devicePixelRatio;
   }
 
   @override
   Widget build(BuildContext context) {
     final style = _config.style;
 
-    return PopScope(
+    return PopScope<Object?>(
       canPop: !_isSettling,
+      onPopInvokedWithResult: _onPopped,
       child: Padding(
         padding:
             EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -541,7 +1093,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// it. The challenge is the issuer's own page, framed by the SDK, and every point taken
   /// off its width is taken off a page formatted for a window it was told about.
   EdgeInsets get _contentPadding {
-    return _card.isAuthenticating
+    return _card.isAuthenticating || _walletChallenge
         ? const EdgeInsets.fromLTRB(0, 8, 0, 0)
         : const EdgeInsets.fromLTRB(16, 8, 16, 16);
   }
@@ -559,35 +1111,42 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     };
   }
 
+  /// The first screen: the wallet, the saved card and a new card, with one pay button.
+  ///
+  /// While a charge runs, every other way to pay on it is shut: the wallet is taken away
+  /// and the rows stop answering, because each is one tap from a second charge for the same
+  /// order. They come back with the answer. A wallet charge keeps its own surface, because
+  /// that surface is what its answer arrives on.
   List<Widget> _methods() {
     final strings = _config.strings;
-    final wallet =
-        PaymentWallet.forPlatform(currentPlatformName(), _config.wallets);
+    final settling = _isSettling;
+    final wallet = _walletShown;
     final saved = _config.savedCards;
+    final canPickCard = saved.length > 1 && !settling;
+    final walletRow = wallet == null ? null : _walletRow(wallet);
+
+    if (_walletChallenge && walletRow != null) {
+      return <Widget>[
+        SizedBox(
+          height: _closeRowHeight,
+          child: SheetHeader(
+            style: _config.style,
+            semanticLabel: strings.close,
+            onPressed: _closeByPayer,
+          ),
+        ),
+        walletRow,
+      ];
+    }
 
     return <Widget>[
       SheetHeader(
         style: _config.style,
         semanticLabel: strings.close,
-        onPressed: () =>
-            _close(_Settled(cancelledResult(closedByPayerMessage))),
+        onPressed: _closeByPayer,
       ),
-      if (wallet != null) ...<Widget>[
-        ClipRRect(
-          borderRadius: BorderRadius.circular(_config.style.radius),
-          child: WalletSurface(
-            key: ValueKey<int>(_walletAttempt),
-            session: _config.session,
-            pageUrl: _config.fieldsPageUrl,
-            pageHeaders: _config.fieldsPageHeaders,
-            wallet: wallet,
-            returnUrl: _config.returnUrl,
-            expectedInvoiceId: _config.expectedInvoiceId,
-            ownSchemes: _config.ownSchemes,
-            height: _config.style.rowHeight,
-            onComplete: _onWalletResult,
-          ),
-        ),
+      if (walletRow != null) ...<Widget>[
+        walletRow,
         const SizedBox(height: 16),
         OrDivider(label: strings.orPayUsing, style: _config.style),
         const SizedBox(height: 16),
@@ -599,16 +1158,14 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
           selected: true,
           leading: BrandMark(brand: _selected?.brand ?? CardBrand.unknown),
           title: '•••• ${_selected?.last4 ?? ''}',
-          trailing: saved.length > 1
+          trailing: canPickCard
               ? LinkText(
                   strings.viewMore,
                   style: _config.style,
-                  onTap: () => setState(() => _screen = _Screen.selectCard),
+                  onTap: () => _openScreen(_Screen.selectCard),
                 )
               : null,
-          onTap: saved.length > 1
-              ? () => setState(() => _screen = _Screen.selectCard)
-              : null,
+          onTap: canPickCard ? () => _openScreen(_Screen.selectCard) : null,
         ),
         const SizedBox(height: 16),
       ],
@@ -617,7 +1174,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         style: _config.style,
         leading: Icon(Icons.credit_card, size: 20, color: _config.style.text),
         title: strings.newCard,
-        onTap: () => setState(() => _screen = _Screen.newCard),
+        onTap: settling ? null : () => _openScreen(_Screen.newCard),
       ),
       if (_error != null) ErrorText(_error!, style: _config.style),
       const SizedBox(height: 16),
@@ -625,11 +1182,50 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         label: '${_config.strings.pay} $_amountLabel'.trim(),
         style: _config.style,
         busy: _charging,
-        onPressed: _selected != null && _config.chargeSavedCard != null
-            ? _paySaved
-            : null,
+        onPressed:
+            _selected != null && _config.chargeSavedCard != null && !settling
+                ? _paySaved
+                : null,
       ),
     ];
+  }
+
+  /// The wallet's button, or, while the issuer's check is up on its page, the room the check
+  /// needs.
+  ///
+  /// The same surface either way, keyed so it keeps its place when everything around it
+  /// goes: a new surface loads a new page, and the check on the old one would be lost. The
+  /// check is the issuer's own page, drawn by the SDK over the wallet's, so it gets the
+  /// card's check's height and no rounding.
+  Widget _walletRow(PaymentWallet wallet) {
+    return ClipRRect(
+      key: const ValueKey<String>('wallet-row'),
+      borderRadius: BorderRadius.circular(
+        _walletChallenge ? 0 : _config.style.radius,
+      ),
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _onWalletTouched(),
+        child: WalletSurface(
+          key: ValueKey<int>(_walletAttempt),
+          session: _config.session,
+          pageUrl: _config.fieldsPageUrl,
+          pageHeaders: _config.fieldsPageHeaders,
+          wallet: wallet,
+          returnUrl: _config.returnUrl,
+          expectedInvoiceId: _config._invoiceToBind,
+          ownSchemes: _config.ownSchemes,
+          height: _walletChallenge
+              ? _challengeHeightIn(context)
+              : _config.style.rowHeight,
+          onComplete: _onWalletResult,
+          onCharging: _onWalletCharging,
+          onChargingAfterLeaving: _onWalletChargingAfterLeaving,
+          onUnavailable: _onWalletUnavailable,
+          onChallenge: _onWalletChallenge,
+        ),
+      ),
+    );
   }
 
   List<Widget> _selectCard() {
@@ -663,9 +1259,18 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   ///
   /// The SDK frames that challenge inside the box and it has to stay framed exactly that
   /// way, so nothing is drawn over it and nothing around it can take the tap that answers
-  /// it.
+  /// it. The close control sits above it, not over it: an issuer's page can stall, and a
+  /// sheet that refuses Back, a tap outside and a drag would otherwise have no way out.
   List<Widget> _challenge(BuildContext context) {
     return <Widget>[
+      SizedBox(
+        height: _closeRowHeight,
+        child: SheetHeader(
+          style: _config.style,
+          semanticLabel: _config.strings.close,
+          onPressed: _closeByPayer,
+        ),
+      ),
       SizedBox(
         height: _challengeHeightIn(context),
         child: CardBox(controller: _card, style: _config.style),
@@ -676,11 +1281,13 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// How tall the challenge can be drawn without pushing the sheet off the screen.
   ///
   /// The issuer's page asks for a code, so the keyboard comes up and takes most of a short
-  /// phone with it. The room left is therefore the ceiling, and the share of the screen is
-  /// what it settles on when there is more room than that.
+  /// phone with it. The room left is therefore the ceiling: what the whole sheet may take,
+  /// less the padding and the close row above the box, so the sheet never has to scroll the
+  /// issuer's page. The share of the screen is what it settles on when there is more room
+  /// than that.
   double _challengeHeightIn(BuildContext context) {
     final media = MediaQuery.of(context);
-    final room = media.size.height - media.viewInsets.bottom - _sheetChrome;
+    final room = _tallestIn(context) - _contentPadding.top - _closeRowHeight;
     final wanted = media.size.height * _challengeShareOfScreen;
 
     return math.max(math.min(wanted, room), 0);
@@ -709,14 +1316,30 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     ];
   }
 
+  /// The card screen's header: back to the methods, or a close while its charge runs.
+  ///
+  /// Going back mid-charge would put the saved card and the wallet in front of a payer whose
+  /// card is still being charged, and a second payment one tap away.
+  SheetHeader _cardScreenHeader() {
+    if (_isSettling) {
+      return SheetHeader(
+        style: _config.style,
+        semanticLabel: _config.strings.close,
+        onPressed: _closeByPayer,
+      );
+    }
+
+    return SheetHeader(
+      style: _config.style,
+      semanticLabel: _config.strings.back,
+      onPressed: () => setState(() => _screen = _Screen.methods),
+      isBack: true,
+    );
+  }
+
   List<Widget> _newCard() {
     return <Widget>[
-      SheetHeader(
-        style: _config.style,
-        semanticLabel: _config.strings.back,
-        onPressed: () => setState(() => _screen = _Screen.methods),
-        isBack: true,
-      ),
+      _cardScreenHeader(),
       SheetTitle(_config.strings.addNewCard, style: _config.style),
       const SizedBox(height: 16),
       SectionLabel(_config.strings.cardInformation, style: _config.style),
@@ -766,13 +1389,13 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   /// card form that ran out of room rather than as a box that is one pixel small.
   double _boxBorders(int rows) => (rows - 1) + 2;
 
-  /// Whether there is enough on the card screen to charge.
+  /// Whether there is enough on the card screen to charge, with nothing else in flight.
   ///
   /// The box answers for the card. The address is asked separately because the gateway
   /// ignores an incomplete one outright, and a payer who filled in half a billing form and
   /// was charged without it would never learn why their bank's address check failed.
   bool get _canPayByCard {
-    if (!_card.isComplete) {
+    if (_isSettling || !_card.isComplete) {
       return false;
     }
 
@@ -785,7 +1408,14 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   }
 
   /// Charges the card in the box, billed to the address beside it.
+  ///
+  /// What the last attempt said is cleared first: left up during the next charge, it reads
+  /// as that charge failing, and a payer who believes it closes the sheet mid-charge.
   Future<void> _payByCard() {
+    if (_error != null) {
+      setState(() => _error = null);
+    }
+
     return _card.pay(
       billing: _config.collectBillingAddress
           ? _billing.detailsFor(_card.snapshot.cardholderName)

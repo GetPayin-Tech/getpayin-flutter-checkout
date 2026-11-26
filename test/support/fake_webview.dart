@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
@@ -58,9 +60,9 @@ class FakeWebViewPlatform extends WebViewPlatform {
   /// Reports that the page finished loading.
   void finishLoading() => delegate?.onPageFinished?.call('');
 
-  /// Reports that the page itself could not be loaded.
-  void failLoading() => delegate?.onWebResourceError?.call(
-        WebResourceError(errorCode: -1, description: 'no connection'),
+  /// Reports that the page itself could not be loaded, with the platform's [errorCode].
+  void failLoading({int errorCode = -1}) => delegate?.onWebResourceError?.call(
+        WebResourceError(errorCode: errorCode, description: 'no connection'),
       );
 
   @override
@@ -114,7 +116,21 @@ class FakeWebViewController extends PlatformWebViewController {
   Object? loadFailure;
 
   /// Posts a message to the host the way this page's own script does.
+  ///
+  /// That page posts only once the host has started it, and puts on every message the key
+  /// the host handed it then. A page the host has not started yet is started first, as a
+  /// real web view would have when it finished loading.
   void post(String message) {
+    if (_pageKey() == null && navigation?.onPageFinished != null) {
+      finishLoading();
+    }
+
+    postAsFrame(_withPageKey(message));
+  }
+
+  /// Posts a message the way anything else on the page would: a frame inside it, or a page
+  /// from before the key, neither of which has the key to put on it.
+  void postAsFrame(String message) {
     final channel = channels.values.firstOrNull;
 
     if (channel == null) {
@@ -122,6 +138,39 @@ class FakeWebViewController extends PlatformWebViewController {
     }
 
     channel.onMessageReceived(JavaScriptMessage(message: message));
+  }
+
+  /// The key the host handed this page when it last started it, if it has.
+  String? _pageKey() {
+    for (final script in scripts.reversed) {
+      final key = RegExp(r'"pageKey":"([0-9a-f]+)"').firstMatch(script);
+
+      if (key != null) {
+        return key.group(1);
+      }
+    }
+
+    return null;
+  }
+
+  /// [message] with this page's key on it, unless it carries one already.
+  String _withPageKey(String message) {
+    final key = _pageKey();
+    final Object? decoded;
+
+    try {
+      decoded = jsonDecode(message);
+    } catch (_) {
+      return message;
+    }
+
+    if (key == null ||
+        decoded is! Map<String, Object?> ||
+        decoded.containsKey('pageKey')) {
+      return message;
+    }
+
+    return jsonEncode(<String, Object?>{...decoded, 'pageKey': key});
   }
 
   /// Reports a navigation on this controller's own page, and answers what it was told.
@@ -152,6 +201,20 @@ class FakeWebViewController extends PlatformWebViewController {
     onPageFinished(loaded.lastOrNull.toString());
   }
 
+  /// Reports that this controller's page changed its own address without loading a page.
+  ///
+  /// What Android reports for a fragment the page sets on itself, which never reaches the
+  /// navigation delegate there.
+  void changeUrl(String url) {
+    final onUrlChange = navigation?.onUrlChange;
+
+    if (onUrlChange == null) {
+      throw StateError('This web view does not watch its address.');
+    }
+
+    onUrlChange(UrlChange(url: url));
+  }
+
   @override
   Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async {}
 
@@ -171,8 +234,34 @@ class FakeWebViewController extends PlatformWebViewController {
     channels[javaScriptChannelParams.name] = javaScriptChannelParams;
   }
 
+  /// Set to have every script the host runs fail, as it does on a web view that is gone.
+  Object? scriptFailure;
+
+  /// What a script run for its result answers, as the card page's start does: true when the
+  /// page has its script. Set to false for an address that served some other page.
+  Object startAnswer = true;
+
+  @override
+  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+    final failure = scriptFailure;
+
+    if (failure != null) {
+      throw failure;
+    }
+
+    scripts.add(javaScript);
+
+    return startAnswer;
+  }
+
   @override
   Future<void> runJavaScript(String javaScript) async {
+    final failure = scriptFailure;
+
+    if (failure != null) {
+      throw failure;
+    }
+
     scripts.add(javaScript);
   }
 
@@ -208,6 +297,14 @@ class FakeNavigationDelegate extends PlatformNavigationDelegate {
 
   /// What the checkout does when a request answers an HTTP error.
   HttpResponseErrorCallback? onHttpError;
+
+  /// What the page's host does when the page changes its own address.
+  UrlChangeCallback? onUrlChange;
+
+  @override
+  Future<void> setOnUrlChange(UrlChangeCallback onUrlChange) async {
+    this.onUrlChange = onUrlChange;
+  }
 
   @override
   Future<void> setOnNavigationRequest(

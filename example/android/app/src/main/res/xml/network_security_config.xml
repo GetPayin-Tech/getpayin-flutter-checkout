@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- For the harness only. tool/dev_server.py is plain HTTP on a LAN address, and Android
      has refused cleartext by default since Android 9, so a release build of this example
-     could not reach it without this.
+     could not reach it without this. The address is the tester's own machine, which no
+     static rule here can name, so cleartext is allowed for the app as a whole.
+
+     What crosses in clear is the payment request and the test server's key, never a token:
+     the server signs with credentials of its own. Over the tunnel it is HTTPS throughout.
 
      Do not copy this file into a real app. Everything the package itself talks to is
      HTTPS, and an app that permits cleartext permits it for its own backend too. -->

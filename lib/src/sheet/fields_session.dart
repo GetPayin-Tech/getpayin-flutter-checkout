@@ -2,10 +2,10 @@ import '../core/url.dart';
 
 /// Why hosted card fields could not take this payment.
 ///
-/// Straight from PayLink's hosted-fields contract. The six marked
-/// [sendsPayerToHostedCheckout] are the ones where the fields cannot run at all and the
-/// payer has to be sent to `checkout_url`; everything else is about one attempt and the
-/// payer can try again on the same form.
+/// Straight from PayLink's hosted-fields contract. The [fatal] ones are where the fields
+/// cannot run at all, and all of them but [alreadyPaid] send the payer to `checkout_url`
+/// ([sendsPayerToHostedCheckout]); everything else is about one attempt and the payer can
+/// try again on the same form.
 enum FieldsFailure {
   /// Hosted fields are off for this company, or the gateway refused a capture context.
   fieldsUnavailable('fields_unavailable', fatal: true),
@@ -31,14 +31,43 @@ enum FieldsFailure {
   /// The payment the client token names is gone, or was never there.
   paymentNotFound('payment_not_found', fatal: true),
 
+  /// PayLink says the invoice is already paid.
+  ///
+  /// Sent at every step of the fields, the first one included, so it can be the payer's
+  /// own payment from a minute ago in another tab. It is the one fatal failure that does
+  /// not send the payer to the hosted checkout: the sheet reports it as
+  /// `CheckoutResultCode.outcomeUnknown`, so the app reads the invoice rather than creating
+  /// a second payment for the order.
+  alreadyPaid('already_paid', fatal: true),
+
+  /// The invoice can no longer be paid: cancelled, voided or otherwise closed.
+  notPayable('not_payable', fatal: true),
+
+  /// The payment's checkout has expired.
+  expired('expired', fatal: true),
+
   /// The card field library could not load: a content blocker, or a CSP that forbids it.
   libraryUnavailable('library_unavailable', fatal: true),
+
+  /// The card fields page you host is older than this package.
+  ///
+  /// Not one of PayLink's codes: the box reports it when the page's first message carries
+  /// no key, because such a page would charge the card and then post an answer the box has
+  /// to refuse. It is caught before the payer can pay. Host the `doc/paylink-fields.html`
+  /// of the release you depend on.
+  pageOutdated('page_outdated', fatal: true),
 
   /// Card payments for this merchant are temporarily refused by failed-payment velocity.
   paymentsPaused('payments_paused', fatal: true),
 
   /// The card the payer entered is not usable.
   cardInvalid('card_invalid'),
+
+  /// The payment keeps the card, and the payer has not ticked the box that agrees to it.
+  ///
+  /// The SDK checks its own tick when Pay is pressed, so a payer who unticks it a moment
+  /// before is asked to tick it again on the same form.
+  consentRequired('consent_required'),
 
   /// The expiry the payer entered is not usable.
   expiryInvalid('expiry_invalid'),
@@ -67,7 +96,10 @@ enum FieldsFailure {
   final bool fatal;
 
   /// True when the only way left to take this payment is the hosted checkout.
-  bool get sendsPayerToHostedCheckout => fatal;
+  ///
+  /// Never for [alreadyPaid]: a paid invoice has nothing left to take, and sending the
+  /// payer to pay it again is how one order is paid for twice.
+  bool get sendsPayerToHostedCheckout => fatal && this != alreadyPaid;
 
   /// The failure [code] names, or [unknown] when it names none of them.
   ///

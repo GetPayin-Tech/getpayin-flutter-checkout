@@ -149,4 +149,29 @@ void main() {
       });
     });
   });
+
+  /*
+   * PayLink refuses a payment that is over at every step of the fields, the first one
+   * included. Each is named, so an integrator reads what happened; a paid one is the one
+   * that must never be sent to pay again.
+   */
+  group('a payment that cannot be taken any more', () {
+    for (final code in <String>['not_payable', 'expired']) {
+      test('reads $code, and sends the payer to the hosted checkout', () {
+        final failure = FieldsFailure.fromCode(code);
+
+        expect(failure.wireName, code);
+        expect(failure.sendsPayerToHostedCheckout, isTrue,
+            reason: 'its page says in PayLink own words why it is over');
+      });
+    }
+
+    test('reads already_paid, and keeps the payer from paying again', () {
+      final failure = FieldsFailure.fromCode('already_paid');
+
+      expect(failure.wireName, 'already_paid');
+      expect(failure.fatal, isTrue);
+      expect(failure.sendsPayerToHostedCheckout, isFalse);
+    });
+  });
 }

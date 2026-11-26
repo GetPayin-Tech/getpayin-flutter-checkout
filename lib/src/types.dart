@@ -26,9 +26,11 @@ enum CheckoutStatus {
 /// [unreadableReturnLink] means the link's own fields could not be read: a genuine decline
 /// carries no code at all, so the two are told apart by this rather than by text. It is the
 /// one to alert on — it means the backend and this reader disagree about the shape of the
-/// link. [wrongInvoice] means the link named another invoice. The payer may well have paid
-/// in both cases, so neither is a reason to ask for payment again before the invoice has
-/// been checked on your server.
+/// link. [wrongInvoice] means a paid claim named another invoice; a checkout passes over
+/// such a link rather than end with it. [unexpectedInvoiceStatus]
+/// means a claim of payment named an invoice that is not paid in full, which can be one a
+/// card was charged on. The payer may well have paid in all three cases, so none is a
+/// reason to ask for payment again before the invoice has been checked on your server.
 enum CheckoutResultCode {
   /// The link's own fields could not be read the way the backend writes them.
   unreadableReturnLink('unreadable_return_link'),
@@ -36,14 +38,19 @@ enum CheckoutResultCode {
   /// The link named an invoice other than the one this checkout was opened for.
   wrongInvoice('wrong_invoice'),
 
-  /// The link reported an invoice state that is not paid in full.
+  /// A claim of payment named an invoice state that is not paid in full.
+  ///
+  /// The claim can be a return link, the payment sheet's own card or wallet charge, or what
+  /// `chargeSavedCard` returned.
   unexpectedInvoiceStatus('unexpected_invoice_status'),
 
   /// A charge started and its answer never arrived, so nobody knows how it ended.
   ///
   /// The one result that is neither a payment nor a refusal. The gateway had the charge
   /// before the answer was lost — the network went, the page died, the payer closed the
-  /// sheet mid-charge — so the card may well have been charged.
+  /// sheet mid-charge — so the card may well have been charged. The payment sheet also
+  /// reports it when PayLink says the invoice is already paid: that may be this payer's own
+  /// payment, and it is the same answer to act on.
   ///
   /// Do not take payment again on this code. Read the invoice on your server, and wait for
   /// the `invoice.paid` webhook, which arrives whether or not the app was still listening.

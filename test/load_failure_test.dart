@@ -23,6 +23,26 @@ void main() {
     });
   });
 
+  /*
+   * iOS reports a load it stopped as a failure: one bank redirect replacing another during
+   * 3-D Secure, or a navigation the checkout itself refused. Read as the page failing, it
+   * would put an error over a payment that is still going.
+   */
+  group('isInterruptedLoad', () {
+    test('is a load the web view cancelled', () {
+      expect(isInterruptedLoad(-999), isTrue);
+    });
+
+    test('is a load interrupted by a navigation the checkout refused', () {
+      expect(isInterruptedLoad(102), isTrue);
+    });
+
+    test('is not a load that failed', () {
+      expect(isInterruptedLoad(-1), isFalse);
+      expect(isInterruptedLoad(-1009), isFalse);
+    });
+  });
+
   group('isPageHttpFailure', () {
     test('is the page when the failing request is the page the payer is on',
         () {

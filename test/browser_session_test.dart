@@ -90,11 +90,66 @@ void main() {
       expect(result.status, CheckoutStatus.cancelled);
     });
 
-    test('refuses a return link naming an invoice other than the one opened',
+    /*
+     * A late link from an earlier checkout, or a made-up one, reaches the app the same way
+     * as this checkout's own. Bound to an invoice, the sheet takes only a link naming it,
+     * and goes on waiting for that one while the payer is still paying.
+     */
+    test('waits past a return link naming another invoice for its own',
         () async {
       final phone = FakePhone(
-        onOpened: (phone) =>
-            phone.deliver(returnLink('success=1&invoice_id=INV-ATTACKER')),
+        onOpened: (phone) {
+          phone.deliver(returnLink('success=1&invoice_id=INV-ATTACKER'));
+          phone.deliver(
+            returnLink('success=1&invoice_id=INV-REAL&invoice_status=PAID'),
+          );
+        },
+      );
+
+      final result = await runBrowserCheckout(
+        testRequest(expectedInvoiceId: 'INV-REAL'),
+        ports: phone.ports,
+      );
+
+      expect(result.status, CheckoutStatus.paid);
+      expect(result.invoiceId, 'INV-REAL');
+    });
+
+    /*
+     * On Android any link to the app brings it to the front, which reads as the payer
+     * closing the sheet. After a link the sheet passed over, the payer may still be paying
+     * in the browser behind the app, so the close cannot be reported as cancelled.
+     */
+    test('waits past a return link naming no invoice', () async {
+      final phone = FakePhone(
+        onOpened: (phone) {
+          phone.deliver(returnLink('success=0&message=Card+declined'));
+          phone.dismiss();
+        },
+      );
+
+      final result = await runBrowserCheckout(
+        testRequest(expectedInvoiceId: 'INV-REAL'),
+        ports: phone.ports,
+      );
+
+      expect(
+        result.status,
+        CheckoutStatus.notPaid,
+        reason:
+            'a decline that names no invoice is not this checkout answering',
+      );
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+      expect(result.invoiceId, isNull);
+    });
+
+    test('is unconfirmed when it closes after a link for another invoice',
+        () async {
+      final phone = FakePhone(
+        onOpened: (phone) {
+          phone.deliver(returnLink('success=1&invoice_id=INV-LATE'));
+          phone.dismiss();
+        },
       );
 
       final result = await runBrowserCheckout(
@@ -103,7 +158,53 @@ void main() {
       );
 
       expect(result.status, CheckoutStatus.notPaid);
-      expect(result.code, CheckoutResultCode.wrongInvoice);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+      expect(result.message, closedByPayerMessage);
+    });
+
+    /*
+     * A server that cannot say how a charge ended answers with a link that names the
+     * invoice and carries no `success`. That is this checkout answering, with a result
+     * nobody can confirm, so it is taken and read as unreadable rather than passed over.
+     */
+    test('takes a link it cannot read when it names the invoice', () async {
+      final phone = FakePhone(
+        onOpened: (phone) {
+          phone.deliver(
+            returnLink('message=PayLink+did+not+answer&invoice_id=INV-REAL'),
+          );
+          phone.dismiss();
+        },
+      );
+
+      final result = await runBrowserCheckout(
+        testRequest(expectedInvoiceId: 'INV-REAL'),
+        ports: phone.ports,
+      );
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.unreadableReturnLink);
+    });
+
+    test('waits past a link that names the invoice more than once', () async {
+      final phone = FakePhone(
+        onOpened: (phone) {
+          phone.deliver(
+            returnLink('success=1&invoice_id=INV-REAL&invoice_id=INV-OTHER'),
+          );
+          phone.deliver(
+            returnLink('success=1&invoice_id=INV-REAL&invoice_status=PAID'),
+          );
+        },
+      );
+
+      final result = await runBrowserCheckout(
+        testRequest(expectedInvoiceId: 'INV-REAL'),
+        ports: phone.ports,
+      );
+
+      expect(result.status, CheckoutStatus.paid);
+      expect(result.returnUrl, contains('invoice_status=PAID'));
     });
 
     test('closes the sheet and stops listening once it is done', () async {

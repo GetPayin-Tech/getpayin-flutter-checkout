@@ -124,6 +124,22 @@ ParsedUrl? parseUrl(String raw) {
   );
 }
 
+/// Where [raw] points, for a log line: its scheme and host, and nothing after them.
+///
+/// A checkout link is signed and can carry the payer's details, and a bank's link its own
+/// one-time values, so a log names where a link went and never what it carried.
+String linkForLog(String raw) {
+  final parsed = parseUrl(raw);
+
+  if (parsed == null) {
+    return 'a link with no scheme';
+  }
+
+  final host = parsed.authority.split('@').last;
+
+  return host.isEmpty ? '${parsed.scheme}:' : '${parsed.scheme}://$host';
+}
+
 /// True when both URLs address the same scheme, host and path, whatever their query.
 bool isSameTarget(String a, String b) {
   final left = parseUrl(a);

@@ -52,9 +52,10 @@ Writing a second copy of one of these is the bug.
 ## Invariants only review catches
 
 1. **A claim of payment is never upgraded.** An unknown or absent status becomes `notPaid`.
-   Both the return link and a hosted-fields charge end at `settlePaidClaim`: only `PAID` is
-   paid, and a paid claim for another invoice is refused. A third source must go through it
-   too.
+   The return link, a hosted-fields charge and a saved card's answer all end at
+   `settlePaidClaim`: only `PAID` is paid, and a paid claim for another invoice is refused.
+   A saved card's answer goes without the expected invoice, because a charge on a token
+   makes its own. A fourth source must go through it too.
 2. **One parser, two readings.** `readReturnClaim` reports what a link says;
    `readCheckoutResult` adds the rule that an unpaid invoice is not a payment, and
    `readCardSave` deliberately does not — a verification run is _meant_ to end unpaid, so
@@ -84,7 +85,9 @@ Writing a second copy of one of these is the bug.
    the host app has scripted. The hosted checkout view and `WalletSurface` register no
    channel and never run JavaScript; `WalletSurface` answers by navigating to the return
    link. A test asserts it. The sheet's card box _is_ scripted, deliberately: it shows no
-   wallet, and the alternative would put the client token in the page's URL.
+   wallet, and the alternative would put the client token in the page's URL. What the
+   wallet page reads from its own link is untrusted, because anyone can send a payer that
+   link: it loads an SDK the link names only from the PayLinks written into the page.
 8. **Both sides of an invoice comparison go through `core/invoice_id.dart`.** The server
    sends a number and the link carries text.
 9. **A payer never sees developer text.** `buildCheckoutSource`'s `error` names an option
@@ -94,7 +97,10 @@ Writing a second copy of one of these is the bug.
    most once; rebuilding it on an ordinary rebuild resets that latch and reports one payment
    twice.
 11. **A failed load always shows a way out.** Otherwise the `open()` future never settles and
-    `SessionGuard` reports busy for the rest of the process.
+    `SessionGuard` reports busy for the rest of the process. For the same reason, a checkout
+    screen the app pops or removes in its own code settles as `cancelled` as it goes. The
+    way out never says "nothing happened" when it may have: a failure after the checkout page
+    loaded is drawn over the page, which stays loaded, and closing then is `outcomeUnknown`.
 12. **Android's Payment Request switch is set before the page loads.** Set after, the payer
     gets a checkout with no Google Pay button and nothing in the log.
 13. **The card box is built when the sheet opens, not when the payer asks for it.** It has a
@@ -102,10 +108,28 @@ Writing a second copy of one of these is the bug.
 14. **A fatal fields failure closes the sheet after the frame, never during it.** A route
     cannot be popped while it is being built.
 15. **The card box answers one charge: its own.** Its channel is shared with everything the
-    page frames and neither platform names the sender, so a `payment` arriving while no
-    charge of the box's is running is ignored, and only a page from the registered origin
-    may hold its top frame. A frame may still load: the gateway's fields and the issuer's
-    step are rendered that way.
+    page frames and neither platform names the sender, so a `payment` is reported only while
+    a charge of the box's is running and only when it carries that charge's `attempt` code.
+    An `error` while that charge runs needs the code too, because it frees the sheet. Only a
+    page from the registered origin may hold its top frame. A frame may still
+    load: the gateway's fields and the issuer's step are rendered that way.
+16. **Nothing in flight is ever reported as `cancelled`.** From the tap on Pay until the
+    answer, while a saved card charges, and while a wallet is open, every way out of the sheet
+    settles `outcomeUnknown`, and every other way to pay on it is shut. A wallet is open from
+    the app going to the background within 10 s of a touch on its button until its answer,
+    or until 15 s after the payer is back with no charge marked: dismissing the wallet leaves
+    no sign on the page, so that release is on purpose, and closing after it still settles
+    `outcomeUnknown`. The page marks a wallet charge only seconds after the wallet's own sheet
+    has closed, so that mark alone is too late to hold on. A mark from a wallet button the
+    sheet is no longer showing (the payer moved on, or another payment started in the same
+    instant) makes whatever comes next `outcomeUnknown`: that charge has nowhere to answer.
+    `WalletSurface` passes that one mark on even after it has left the screen, through
+    `onChargingAfterLeaving`, so a mark from an old button is never taken for the new one's.
+    A row drawn before the mark still answers a tap after it, so every way off the wallet's
+    screen checks again when the tap lands. A card box that fails while another payment is
+    out waits for that payment to end: handing over then is a second way to pay. After a
+    wallet that never answered it settles `outcomeUnknown` instead of handing over. The close
+    stays, because a charge can hang.
 
 ## House style
 

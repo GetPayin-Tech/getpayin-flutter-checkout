@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:math';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../core/url.dart';
+import '../webview/load_failure.dart';
 import 'billing_details.dart';
 import 'card_fields_snapshot.dart';
 import 'fields_page.dart';
@@ -33,6 +37,7 @@ class CardFieldsController extends ChangeNotifier {
     this.onPayment,
     this.onFailure,
     this.onEvent,
+    this.onRefused,
   }) {
     _webView = _build();
   }
@@ -85,13 +90,30 @@ class CardFieldsController extends ChangeNotifier {
   /// it is watched: a listener here changes nothing and misses nothing.
   final void Function(FieldsEvent event)? onEvent;
 
+  /// Called with one line for every message the box refused, and why.
+  ///
+  /// A message is refused when it does not carry this page's key, or answers a charge the
+  /// box is not waiting for. Refusing is right, but a refusal nobody hears is how a page
+  /// that is out of date goes unnoticed, so each one is said here.
+  final void Function(String note)? onRefused;
+
   late final WebViewController _webView;
+
+  /// A code only the page this box started was handed, which it puts on every message.
+  ///
+  /// The channel carries messages from everything the page frames, the issuer's 3-D Secure
+  /// page included, and no platform names the sender. A frame from another site cannot read
+  /// what the host handed the page, so a message without this code is not the page's.
+  final String _pageKey = _newCode();
 
   /// The controller the card box renders with.
   WebViewController get webView => _webView;
 
   bool _disposed = false;
   CardFieldsSnapshot _snapshot = const CardFieldsSnapshot();
+
+  /// The code sent with the charge in flight, which its answer has to carry back.
+  String? _attempt;
 
   /// Everything the box knows about itself, for a sheet that wants it in one piece.
   CardFieldsSnapshot get snapshot => _snapshot;
@@ -108,10 +130,11 @@ class CardFieldsController extends ChangeNotifier {
   /// True once the charge is running and can no longer be called off.
   bool get isCharging => _snapshot.charging;
 
-  /// True once the gateway has this attempt's charge, whatever it answered since.
+  /// True from when the gateway has this attempt's charge until it answers.
   bool get chargeStarted => _snapshot.chargeStarted;
 
-  /// What will actually be charged, in minor units, once the gateway has said.
+  /// What will actually be charged, in hundredths whatever the currency, once the gateway
+  /// has said. `formatAmount` writes it for a pay button.
   int? get amountMinor => _snapshot.amountMinor;
 
   /// The currency it will be charged in, once the gateway has said.
@@ -137,15 +160,59 @@ class CardFieldsController extends ChangeNotifier {
       return;
     }
 
+    _attempt = _newCode();
     _apply(
       _snapshot
           .copyWith(charging: true, chargeStarted: false)
           .withMessage(null),
     );
 
-    await _webView.runJavaScript(
-      payCommand(billing: billing, keepTheCard: keepsTheCard),
+    try {
+      await _webView.runJavaScript(
+        payCommand(
+          billing: billing,
+          keepTheCard: keepsTheCard,
+          attempt: _attempt,
+        ),
+      );
+    } catch (cause) {
+      _pageUnreachable(cause, 'The card page could not be asked to pay.');
+    }
+  }
+
+  /// Fails the box as one that cannot run, when the page could not be told something.
+  ///
+  /// A web view that is gone, or a script it refused. Unstarted, the box would sit empty
+  /// with nothing to say why. Asked to pay, the page never got the charge, and a box left
+  /// marked as charging would hold the sheet for an answer that cannot come. The charge
+  /// mark comes before the gateway has the charge, so a sheet that saw none settles this as
+  /// nothing charged, and one that did settles it unconfirmed. The cause goes to the log in
+  /// a debug build only, as the sheet's own causes do.
+  void _pageUnreachable(Object cause, String message) {
+    if (kDebugMode) {
+      debugPrint('GetPayIn card box: $cause');
+    }
+
+    _failHere(
+      FieldsError(
+        failure: FieldsFailure.unknown,
+        message: message,
+        attempt: _attempt,
+      ),
     );
+  }
+
+  /// A fresh code for one page or one charge: 16 random bytes, as hex.
+  ///
+  /// From the platform's secure source, because the code is only worth anything while
+  /// nothing outside the page can guess it.
+  static String _newCode() {
+    final random = Random.secure();
+
+    return List<String>.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
 
   /// Takes the page down with the box.
@@ -183,7 +250,10 @@ class CardFieldsController extends ChangeNotifier {
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: _judge,
+          onPageStarted: (_) => _pageLoading(),
           onPageFinished: (_) => unawaited(_start()),
+          onWebResourceError: _onLoadError,
+          onHttpError: _onHttpError,
         ),
       );
 
@@ -204,21 +274,42 @@ class CardFieldsController extends ChangeNotifier {
   /// on, so the page it was given is the only one that may hold it. A frame is left alone:
   /// the gateway renders the card number and the security code in its own frames, and the
   /// SDK frames the issuer's 3-D Secure step here too.
+  ///
+  /// A page sent elsewhere before its fields are live never mounts them, and the box would
+  /// sit empty with nothing to say why: that is reported as a page on the wrong origin, so
+  /// the sheet hands the payer over as it does for one.
   NavigationDecision _judge(NavigationRequest request) {
     final mine = !request.isMainFrame || session.servesFrom(request.url);
+
+    if (!mine && !isReady) {
+      _reportWrongOrigin();
+    } else if (!mine) {
+      onRefused?.call(
+        'refused to let the card page go to ${linkForLog(request.url)}',
+      );
+    }
 
     return mine ? NavigationDecision.navigate : NavigationDecision.prevent;
   }
 
-  /// Tells the sheet the page is on the wrong origin, once this controller exists.
+  /// True once the sheet has been told the page is on the wrong origin.
+  bool _wrongOriginReported = false;
+
+  /// Tells the sheet the page is on the wrong origin, once.
   ///
-  /// A microtask rather than a call from here: this runs while the constructor is still
+  /// A microtask rather than a call from here: this can run while the constructor is still
   /// running, and a listener that reaches back for the controller would find a field that
   /// is still being initialised. Nothing can have reached the page by then either, so
-  /// nothing is lost by letting the turn finish first.
+  /// nothing is lost by letting the turn finish first. Once, because a page can be sent
+  /// elsewhere more than once, and the sheet hands the payer over only once.
   void _reportWrongOrigin() {
+    if (_wrongOriginReported) {
+      return;
+    }
+
+    _wrongOriginReported = true;
     scheduleMicrotask(
-      () => _fail(
+      () => _failHere(
         const FieldsError(
           failure: FieldsFailure.originNotAllowed,
           message:
@@ -228,15 +319,81 @@ class CardFieldsController extends ChangeNotifier {
     );
   }
 
-  Future<void> _start() async {
-    if (isReady) {
+  void _onLoadError(WebResourceError error) {
+    if (isMainFrameFailure(error.isForMainFrame) &&
+        !isInterruptedLoad(error.errorCode)) {
+      _pageNotLoaded('The card page could not be loaded: ${error.description}');
+    }
+  }
+
+  void _onHttpError(HttpResponseError error) {
+    if (isPageHttpFailure(
+        failedUri: error.request?.uri.toString(), pageUri: pageUrl)) {
+      _pageNotLoaded(
+        'The card page answered HTTP ${error.response?.statusCode}.',
+      );
+    }
+  }
+
+  /// Fails the box as one that cannot run when its page did not load, or is gone.
+  ///
+  /// Offline, the site down, a tunnel's own page answering in its place, or a page that
+  /// loaded and then failed when it loaded again: the box would sit empty, with nothing to
+  /// say why. Not while a charge is out, which is held for its answer whatever the page does.
+  /// Before that, nothing was charged.
+  void _pageNotLoaded(String message) {
+    if (isCharging || chargeStarted) {
       return;
     }
 
-    await _webView.runJavaScript(
-      startFieldsCommand(
+    _pageUnreachable(message, message);
+  }
+
+  /// Takes the box back to not ready when its page loads again.
+  ///
+  /// A page that loads again has no fields until it is started and mounts them, and a box
+  /// still saying "ready" would offer Pay on a page that cannot take the charge: the charge
+  /// would go nowhere and hold the sheet. Not while a charge is out: the sheet holds for its
+  /// answer whatever the page does, and closing then is unconfirmed.
+  void _pageLoading() {
+    if (_disposed || !isReady || isCharging || chargeStarted) {
+      return;
+    }
+
+    _apply(const CardFieldsSnapshot());
+  }
+
+  /// Starts the fields, every time the page finishes loading.
+  ///
+  /// Every time, because a page that loads again has no fields until it is started, and a
+  /// box that skipped it would offer Pay on a page that can no longer take it. A page that
+  /// is already running ignores a second start.
+  ///
+  /// The command answers whether the page has the card page's script at all. An address
+  /// that served some other page, such as an error page, which iOS reports with no address
+  /// on it, has none, and is a page that did not load whatever its status said.
+  Future<void> _start() async {
+    final Object answer;
+
+    try {
+      answer = await _webView.runJavaScriptReturningResult(_startCommand());
+    } catch (cause) {
+      _pageUnreachable(cause, 'The card page could not be started.');
+
+      return;
+    }
+
+    if (answer != true && answer != 1 && answer != 'true' && answer != '1') {
+      _pageNotLoaded(
+        'The card page address served a page without the card page script.',
+      );
+    }
+  }
+
+  String _startCommand() => startFieldsCommand(
         clientToken: session.clientToken,
         sdkUrl: session.sdkUrl,
+        pageKey: _pageKey,
         style: style.toCssVariables(),
         collectName: collectsBilling,
         collectConsent: keepsTheCard,
@@ -244,22 +401,60 @@ class CardFieldsController extends ChangeNotifier {
         cardNumberLabel: labels.cardNumber,
         expiryLabel: labels.expiry,
         securityCodeLabel: labels.securityCode,
-      ),
-    );
-  }
+      );
 
   /// Whether [event] answers a charge this box never started.
   ///
   /// The channel is shared with everything the page frames, and neither platform names the
   /// sender of a message. So the box reports one payment only: the one it asked for, while
-  /// it is still waiting for the answer.
-  bool _answersNoCharge(FieldsEvent event) =>
-      event is FieldsPayment && !_snapshot.charging;
+  /// it is still waiting for the answer, carrying the code that charge was sent with. The
+  /// issuer's challenge is framed in the box while the charge waits, and a frame from
+  /// another site cannot read what the host handed the page.
+  ///
+  /// A failure while the charge runs is held to the same code: it ends the charge and frees
+  /// the sheet, and one from another frame would do that while the real charge can still go
+  /// through. A failure with no charge running is taken from the page as it comes.
+  bool _answersNoCharge(FieldsEvent event) => switch (event) {
+        FieldsPayment(:final attempt) =>
+          !_snapshot.charging || _attempt == null || attempt != _attempt,
+        FieldsError(:final attempt) =>
+          _snapshot.charging && _attempt != null && attempt != _attempt,
+        _ => false,
+      };
+
+  /// True once the page has been found to be older than this package.
+  bool _outdatedReported = false;
 
   void _receive(String raw) {
+    if (_disposed) {
+      return;
+    }
+
     final event = parseFieldsEvent(raw);
 
-    if (event == null || _disposed || _answersNoCharge(event)) {
+    if (event == null) {
+      onRefused?.call('refused a message that is not one the card page sends');
+
+      return;
+    }
+
+    final key = fieldsPageKeyOf(raw);
+
+    if (key != _pageKey) {
+      if (key == null && !isReady) {
+        _reportOutdatedPage();
+
+        return;
+      }
+
+      _refuse(event, 'it does not carry this page\'s key');
+
+      return;
+    }
+
+    if (_answersNoCharge(event)) {
+      _refuse(event, 'it answers no charge this box is waiting for');
+
       return;
     }
 
@@ -278,18 +473,58 @@ class CardFieldsController extends ChangeNotifier {
     }
   }
 
+  void _refuse(FieldsEvent event, String why) =>
+      onRefused?.call('refused ${describeFieldsEvent(event)}: $why');
+
+  /// Hands the payer over when the page is older than this package, once.
+  ///
+  /// Such a page posts no key, so the box would refuse its answer after the card was
+  /// charged. Its first message comes before the payer can pay, which is when this is
+  /// caught: a message without a key before the box is ready is that page, and nothing has
+  /// been charged yet. Once the box is ready, a message without the key is only refused.
+  void _reportOutdatedPage() {
+    if (_outdatedReported) {
+      return;
+    }
+
+    _outdatedReported = true;
+    _failHere(
+      const FieldsError(
+        failure: FieldsFailure.pageOutdated,
+        message: 'The card fields page is older than this package. Host the '
+            'paylink-fields.html of the release the app depends on.',
+      ),
+    );
+  }
+
   /// Replaces what the box knows, and tells its listeners only when something moved.
   ///
   /// An event that says nothing about this box, which is any of the wallet's, hands back
   /// the snapshot it was given, and a sheet that rebuilt for it would be rebuilding for the
   /// surface next door.
+  ///
+  /// Nothing changes once the box is disposed: its web view can still report a load after
+  /// the sheet has closed, and a notifier that is gone cannot be told anything.
   void _apply(CardFieldsSnapshot next) {
-    if (identical(next, _snapshot)) {
+    if (_disposed || identical(next, _snapshot)) {
       return;
     }
 
     _snapshot = next;
     notifyListeners();
+  }
+
+  /// Fails the box for a reason it found itself, and says so to whoever keeps a log.
+  ///
+  /// A failure the page reports reaches [onEvent] on its way in. One the box decides on
+  /// its own would otherwise leave the log with a handover and no reason for it.
+  void _failHere(FieldsError error) {
+    if (_disposed) {
+      return;
+    }
+
+    onEvent?.call(error);
+    _fail(error);
   }
 
   void _fail(FieldsError error) {

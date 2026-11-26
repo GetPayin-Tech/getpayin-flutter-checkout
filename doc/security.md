@@ -38,10 +38,19 @@ So `CheckoutStatus.paid` means "the link said so", not "the money moved".
    reaches the app with no checkout waiting for one. So the link your app was opened with
    cannot become the result of the next payment the payer starts, and neither can the link
    that settled the payment before it. Both are links the plugin can still hand back after
-   the fact, which is why the rule lives here rather than in it.
-3. **`expectedInvoiceId` binds the link to the checkout.** With it set, a paid link naming a
-   different invoice, or naming none at all, is reported as `notPaid`. **Pass it whenever
-   you have it.** Without it the package has nothing to tie the link to.
+   the fact, which is why the rule lives here rather than in it. A dropped link, and one
+   that settled a checkout, is refused for ten minutes after: long enough for any second
+   delivery, and no longer, because your app's own links can carry anything.
+3. **`expectedInvoiceId` binds the link to the checkout.** With it set, every checkout (the
+   browser sheet, the in-app screen and the payment sheet's wallet button) passes over a
+   link that names a different invoice, or none at all, and goes on waiting for its own, so
+   a late link from another checkout is never read as this one's result, paid or not. The
+   payer may still be paying when it arrives (on Android such a link also brings your app
+   to the front, over the browser), so a checkout that then closes with no answer of its
+   own settles `notPaid` with `outcomeUnknown`, never `cancelled`. A link that names the invoice is read as this checkout's answer, and a
+   `paid` in it is still a claim for the `invoice.paid` webhook to confirm. **Pass it
+   whenever you have it.** Without it the package has nothing to tie the
+   link to.
 4. **One checkout at a time**, so a second cannot be stacked over a live one.
 5. **A result is delivered once.** The return link can arrive from a web view navigation, a
    deep-link event and a recreated activity at the same moment; every settle after the first
@@ -66,6 +75,11 @@ outcomes:
 | `load`           | Stays in the web view. | `https:`, `http:`, `about:`, `data:`, `blob:`, `file:`                              |
 | `openExternally` | Handed to the phone.   | a bank app for 3-D Secure, `tel:`, `mailto:`, `intent:`                             |
 | `block`          | Refused.               | `javascript:`, your own app's schemes, `market:`, `sms:`, a frame navigating itself |
+
+An `intent:` link is not handed over as written, because no app answers to it. It is read
+the way Chrome reads it: the app link it names is held to these same rules before it is
+opened, and the web page it falls back on is loaded only if it is an ordinary `https:` or
+`http:` page. An `intent:` link reaches nothing a plain link could not.
 
 Three of those deserve explanation.
 
@@ -132,12 +146,19 @@ page sends. The wallet surface is the exception — a page the host has scripted
 Apple Pay, so there is no channel to hand it over, and the token travels in the fragment,
 which a browser does not send to a server.
 
+**A link to your page cannot choose its script.** The wallet surface's fragment also says
+which PayLink's SDK to load, and anyone can send a payer a link to the page on your origin.
+So the page loads an SDK that a link names only when it is one of the PayLinks the page was
+generated for, compared by address and path, and otherwise does nothing. The card page is
+told its SDK over the channel, which no link can reach.
+
 **The card never reaches your app.** The number and security code are rendered by the gateway
 in iframes on the page you host. What the page hands back is a one-time transient token.
 
 **The origin is checked on every call** and is baked into the capture context, which is why
 the page has to be served from the origin registered on your integration. The sheet refuses
-to load a page from anywhere else rather than showing an empty box.
+to load a page from anywhere else rather than showing an empty box, and a page sent
+elsewhere before its fields are live is reported the same way.
 
 **A charge is idempotent per invoice.** PayLink holds it behind a per-payment lock, so a
 double-tapped pay button is refused with `in_progress` rather than charged twice.
@@ -145,9 +166,20 @@ double-tapped pay button is refused with `in_progress` rather than charged twice
 **The card box answers one charge: its own.** The box is the one surface the package
 scripts, and the channel its page posts on is shared with everything that page frames — the
 gateway's own fields, and the issuer's 3-D Secure step. Neither platform tells the host
-which frame sent a message. So the sheet reports a payment only while it is waiting for the
-answer to a charge it started, and only your registered origin may hold the box's top frame;
-a frame inside it may still load, because that is how all three are rendered.
+which frame sent a message. So each charge carries a fresh code, made from the secure
+random source and handed to your page alone, which a frame from another site cannot read.
+The sheet reports a payment only while it is waiting for the answer to a charge it started,
+and only when that answer carries the charge's code. A failure while the charge runs is held
+to the same code, because a failure ends the charge and offers the payer another way to
+pay. Only your registered origin may hold
+the box's top frame; a frame inside it may still load, because that is how all three are
+rendered.
+
+**The wallet button's page stays on your page or PayLink's.** It is the page the sheet takes
+the wallet's return link from, so its top frame may hold your registered origin, PayLink's
+own pages (a "Mobile App" integration's return link forwards the payer through one) and the
+return link, and nothing else. Frames inside it load as they need to. A page sent elsewhere
+before it has loaded takes the wallet away, rather than leave an empty row.
 
 ## Saving a card
 
@@ -168,9 +200,10 @@ the payer a card they can use.
 ## Reading the return link
 
 The link is read by exact field name (`success`, `invoice_id`, `invoice_status`, `message`),
-and the values are taken as sent. A link is refused outright when it repeats any field, or
+and the values are taken as sent. A link is refused outright when it repeats any field,
 carries a name only a looser reader would take for one of those four (`Success`,
-`invoiceId`, `%73uccess`).
+`invoiceId`, `%73uccess`), or carries a name with a bracket or a control character in it,
+which a server may read as one of those four.
 
 That keeps this reader and a server checking the link's `signature` from ever reading
 different values out of one link. A reader that folded case or took the first copy of a field

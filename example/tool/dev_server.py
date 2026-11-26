@@ -12,7 +12,13 @@ and keep the credentials in `~/.config/getpayin/dev.env`:
     GETPAYIN_PUBLIC_TOKEN=...
     GETPAYIN_HASH_TOKEN=...
 
-    python3 example/tool/dev_server.py            # serves on the LAN, port 8788
+    python3 example/tool/dev_server.py                 # this computer only, port 8788
+    HOST=0.0.0.0 python3 example/tool/dev_server.py    # also a phone on the same network
+
+It signs with those credentials and takes none from the phone. Every call the app makes
+carries the key it prints as it starts (`GETPAYIN_DEV_SERVER_KEY` in the same file keeps
+one key across restarts), so nothing else that can reach it can ask it for payments, or
+charge or revoke the cards it holds.
 """
 
 from __future__ import annotations
@@ -274,6 +280,11 @@ PENDING: dict[str, dict] = {}
 # link to an app the phone does not have goes nowhere at all.
 DEFAULT_RETURN_URL = "myapp://payment-return"
 
+# The link each finished challenge was answered with. A reload of the return page, or the
+# issuer posting twice, gets the same answer again: the charge is not pending any more,
+# and "not pending" is not a decline.
+FINISHED: dict[str, str] = {}
+
 
 def data_of(answer: dict) -> dict:
     """The `data` block of a PayLink answer, or an empty one when it carried none."""
@@ -341,6 +352,12 @@ def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
         charge["authentication_reference_id"] = setup["data"]["reference_id"]
 
     status, answer = call_tokens("tokens/charge", charge, config)
+
+    # PayLink records the payment after the gateway has charged, so a server error can
+    # follow a charge. Handed on with a 200 it would read as a decline the payer can try
+    # again after; raised, it reaches the app as a 502, which it reports as unconfirmed.
+    if status >= 500:
+        raise RuntimeError(f"PayLink answered {status}: the card may have been charged")
 
     if status != 202:
         # The invoice is the only handle on what the issuer decided. PayLink answers a
@@ -425,32 +442,97 @@ def finish_authentication(reference: str) -> str:
     with the rules it already has. It is this server asserting the outcome, not PayLink --
     which is why the app treats a result as a report and the webhook as the proof.
     """
+    if reference in FINISHED:
+        return FINISHED[reference]
+
     pending = PENDING.pop(reference, None)
 
     if pending is None:
-        return f"{DEFAULT_RETURN_URL}?success=0&message=That+challenge+has+already+been+answered"
+        return unconfirmed_link("This server is not waiting on that challenge")
 
-    status, answer = call_tokens(
-        "tokens/authentication/complete",
-        OrderedDict(
-            (
-                ("card_token", pending["card_token"]),
-                ("invoice_id", str(pending["invoice_id"])),
-                ("authentication_transaction_id", pending["authentication_transaction_id"]),
-            )
-        ),
-        pending["config"],
-    )
+    return_url = pending.get("return_url") or DEFAULT_RETURN_URL
 
-    paid = status < 300 and answer.get("success")
-    fields = {
-        "success": "1" if paid else "0",
-        "invoice_id": str(pending["invoice_id"]),
-        "invoice_status": "PAID" if paid else "UNPAID",
-        "message": str(answer.get("message") or ("Charged the saved card." if paid else "The bank did not approve it.")),
-    }
+    try:
+        status, answer = call_tokens(
+            "tokens/authentication/complete",
+            OrderedDict(
+                (
+                    ("card_token", pending["card_token"]),
+                    ("invoice_id", str(pending["invoice_id"])),
+                    ("authentication_transaction_id", pending["authentication_transaction_id"]),
+                )
+            ),
+            pending["config"],
+        )
+    except Exception:  # noqa: BLE001 - no answer at all is as unknown as a server error
+        link = unconfirmed_link(
+            "PayLink did not answer: the card may have been charged",
+            pending["invoice_id"],
+            return_url,
+        )
+    else:
+        link = completion_link(status, answer, pending["invoice_id"], return_url)
 
-    return pending["return_url"] + "?" + urllib.parse.urlencode(fields)
+    FINISHED[reference] = link
+
+    return link
+
+
+def completion_link(
+    status: int, answer: object, invoice_id: object, return_url: str = DEFAULT_RETURN_URL
+) -> str:
+    """The return link for PayLink's answer to a completed challenge.
+
+    Only two answers say how it went: `success: true` with the invoice's paid status, and
+    a 422 with `success: false`, which is a decline. The link carries PayLink's own paid
+    status, so the package can refuse an invoice that is not paid in full. Anything else --
+    a server error, an answer that names no invoice -- can follow the charge, because
+    PayLink records the payment after the gateway answers, so it gets a link that says
+    nothing about the outcome.
+    """
+    body = answer if isinstance(answer, dict) else {}
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+
+    if status < 300 and body.get("success") is True and data.get("paid_status"):
+        fields = {
+            "success": "1",
+            "invoice_id": str(data.get("invoice_id") or invoice_id),
+            "invoice_status": str(data["paid_status"]),
+            "message": "Charged the saved card.",
+        }
+    elif status == 422 and body.get("success") is False:
+        fields = {
+            "success": "0",
+            "invoice_id": str(invoice_id),
+            "invoice_status": "UNPAID",
+            "message": str(body.get("message") or "The bank did not approve it."),
+        }
+    else:
+        return unconfirmed_link(
+            f"PayLink answered {status}: the card may have been charged",
+            invoice_id,
+            return_url,
+        )
+
+    return return_url + "?" + urllib.parse.urlencode(fields)
+
+
+def unconfirmed_link(
+    reason: str, invoice_id: object = None, return_url: str = DEFAULT_RETURN_URL
+) -> str:
+    """A return link that says nothing about how the charge ended.
+
+    There is no link for "nobody knows". The package reads one without `success` as
+    unreadable and closes the sheet, where `success=0` would offer the payer another try on
+    a card that may have been charged. It names the invoice when there is one: a browser
+    sheet bound to that invoice passes over a link that names none.
+    """
+    fields = {"message": reason}
+
+    if invoice_id is not None:
+        fields["invoice_id"] = str(invoice_id)
+
+    return return_url + "?" + urllib.parse.urlencode(fields)
 
 
 def refused_code(detail: str) -> str | None:
@@ -467,6 +549,21 @@ class Handler(BaseHTTPRequestHandler):
     """Answers the one question the app asks: make me a payment."""
 
     config: dict[str, str] = {}
+
+    # The key every call from the app carries. The routes a browser or PayLink reaches -- the
+    # fields page, the bank's challenge and the webhook -- cannot carry it and do not ask.
+    key: str = ""
+
+    def _from_the_app(self) -> bool:
+        """True when the request carries this server's key; answers 401 when it does not."""
+        given = self.headers.get("X-Dev-Server-Key", "")
+
+        if self.key and hmac.compare_digest(given.encode(), self.key.encode()):
+            return True
+
+        self._send(401, {"error": "Missing or wrong X-Dev-Server-Key."})
+
+        return False
 
     def _send(self, status: int, body: dict) -> None:
         encoded = json.dumps(body).encode()
@@ -502,6 +599,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/paylink-fields.html"):
             self._send_page()
 
+            return
+
+        if not self._from_the_app():
             return
 
         if self.path.startswith("/cards"):
@@ -580,7 +680,7 @@ class Handler(BaseHTTPRequestHandler):
     def _charge(self, asked: dict) -> None:
         """Charges a card this harness was told about, the way a real backend would."""
         try:
-            status, answer = charge_card(asked, self._credentials(asked))
+            status, answer = charge_card(asked, self.config)
         except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
             self._send(502, {"error": str(failure)})
 
@@ -594,29 +694,13 @@ class Handler(BaseHTTPRequestHandler):
     def _revoke(self, asked: dict) -> None:
         """Revokes a vaulted card, which is a call only something holding the token can make."""
         try:
-            answer = revoke_card(asked, self._credentials(asked))
+            answer = revoke_card(asked, self.config)
         except Exception as failure:  # noqa: BLE001 - the app is told whatever went wrong
             self._send(502, {"error": str(failure)})
 
             return
 
         self._send(200, answer)
-
-    def _credentials(self, asked: dict) -> dict[str, str]:
-        """This server's own credentials, with anything the app sent taking precedence.
-
-        The harness can be pointed at another integration from the phone, so a tester does
-        not have to edit a file and restart to try a second account. Empty values are
-        ignored rather than honoured: a blank field in the app means "leave it alone", not
-        "sign with nothing".
-        """
-        overrides = {
-            "GETPAYIN_BASE_URL": str(asked.get("base_url") or "").strip(),
-            "GETPAYIN_PUBLIC_TOKEN": str(asked.get("public_token") or "").strip(),
-            "GETPAYIN_HASH_TOKEN": str(asked.get("hash_token") or "").strip(),
-        }
-
-        return self.config | {k: v for k, v in overrides.items() if v}
 
     def do_POST(self) -> None:  # noqa: N802 - the name the server calls
         length = int(self.headers.get("Content-Length") or 0)
@@ -628,12 +712,14 @@ class Handler(BaseHTTPRequestHandler):
             asked = {}
 
         if self.path.startswith("/charge"):
-            self._charge(asked)
+            if self._from_the_app():
+                self._charge(asked)
 
             return
 
         if self.path.startswith("/revoke"):
-            self._revoke(asked)
+            if self._from_the_app():
+                self._revoke(asked)
 
             return
 
@@ -654,12 +740,15 @@ class Handler(BaseHTTPRequestHandler):
 
             return
 
+        if not self._from_the_app():
+            return
+
         try:
             payment = create_payment(
                 amount=str(asked.get("amount", "")).strip(),
                 currency=str(asked.get("currency", "")).strip().upper(),
                 title=str(asked.get("title") or "Example order"),
-                config=self._credentials(asked),
+                config=self.config,
                 hosted_fields=bool(asked.get("hosted_fields")),
                 tokenize=bool(asked.get("tokenize")),
                 first_name=str(asked.get("first_name") or "Test"),
@@ -693,12 +782,20 @@ def lan_address() -> str:
 
 
 def main() -> None:
-    """Serves until it is stopped."""
-    Handler.config = configuration()
-    port = int(os.environ.get("PORT", "8788"))
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    """Serves until it is stopped.
 
-    print(f"Point the example app at http://{lan_address()}:{port}")
+    On this computer only unless `HOST` says otherwise: a tunnel on the same machine reaches
+    it there, and a phone on the network needs `HOST=0.0.0.0`.
+    """
+    Handler.config = configuration()
+    Handler.key = Handler.config.get("GETPAYIN_DEV_SERVER_KEY") or secrets.token_urlsafe(18)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8788"))
+    server = HTTPServer((host, port), Handler)
+    address = lan_address() if host == "0.0.0.0" else host
+
+    print(f"Point the example app at http://{address}:{port}")
+    print(f"Server key for the app: {Handler.key}")
     print(f"Creating payments on {Handler.config['GETPAYIN_BASE_URL']}")
     server.serve_forever()
 

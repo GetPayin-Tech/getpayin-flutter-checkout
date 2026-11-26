@@ -36,7 +36,8 @@ class CardFieldsSnapshot {
   /// True once the charge is running and can no longer be called off.
   final bool charging;
 
-  /// What will actually be charged, in minor units, once the gateway has said.
+  /// What will actually be charged, in hundredths whatever the currency, once the gateway
+  /// has said.
   final int? amountMinor;
 
   /// The currency it will be charged in, once the gateway has said.
@@ -45,12 +46,14 @@ class CardFieldsSnapshot {
   /// The last thing worth showing the payer about the card they entered.
   final String? errorMessage;
 
-  /// True once the gateway has been handed this attempt's charge.
+  /// True from the moment the gateway is handed this attempt's charge until it answers.
   ///
-  /// Sticky, unlike [charging], which an answer of any kind clears. What the sheet needs to
-  /// know when something goes wrong is not whether a charge is running now but whether one
-  /// ever left: after it did, no failure can honestly be reported as nothing having been
-  /// charged. Cleared only when the payer starts another attempt.
+  /// What the sheet needs to know when something goes wrong is not whether an attempt is
+  /// running but whether the charge itself left: after it did, no failure can honestly be
+  /// reported as nothing having been charged. Asking the issuer comes first and charges
+  /// nothing, so 3-D Secure does not set it, and a failed or abandoned challenge stays a step
+  /// the payer can retry. A payment of either kind is an answer and clears it; a failure does
+  /// not, because the answer is what it lost.
   final bool chargeStarted;
 
   /// The name the payer typed on the card, which the charge is billed to.
@@ -138,14 +141,14 @@ CardFieldsSnapshot applyFieldsEvent(
         empty: empty,
         value: value,
       ),
-    FieldsAuthenticating(:final isChallenge) => snapshot.copyWith(
-        authenticating: isChallenge,
-        charging: true,
-        chargeStarted: true,
-      ),
+    FieldsAuthenticating(:final isChallenge) =>
+      snapshot.copyWith(authenticating: isChallenge, charging: true),
     FieldsCharging() => snapshot.copyWith(charging: true, chargeStarted: true),
-    FieldsPayment() =>
-      snapshot.copyWith(charging: false, authenticating: false),
+    FieldsPayment() => snapshot.copyWith(
+        charging: false,
+        authenticating: false,
+        chargeStarted: false,
+      ),
     FieldsError(:final message) => snapshot
         .copyWith(charging: false, authenticating: false)
         .withMessage(message),
@@ -159,6 +162,9 @@ CardFieldsSnapshot applyFieldsEvent(
 /// refused, so typing into a field clears the message. An empty field is not a correction
 /// yet, and clearing it there would take the explanation away the moment they touched the
 /// form.
+///
+/// A name that arrives with no value is a name the payer cleared, so it becomes empty text
+/// rather than nothing: nothing keeps the old one, which would still be billed.
 CardFieldsSnapshot _fieldChanged(
   CardFieldsSnapshot snapshot, {
   required String field,
@@ -166,7 +172,7 @@ CardFieldsSnapshot _fieldChanged(
   required bool empty,
   String? value,
 }) {
-  final name = field == _nameField ? value?.trim() : null;
+  final name = field == _nameField ? (value?.trim() ?? '') : null;
   final fields = <String>{...snapshot.valid};
 
   (field == _nameField ? _isAName(name) : valid)
