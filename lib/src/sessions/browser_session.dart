@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/deferred.dart';
+import '../core/invoice_id.dart';
 import '../core/messages.dart';
 import '../core/return_url.dart';
 import '../errors.dart';
@@ -104,13 +105,25 @@ Future<CheckoutResult> runBrowserCheckout(
   final options = request.options;
   final result = Deferred<CheckoutResult>();
   final dismissed = Deferred<void>();
+  var passedOver = false;
+  late CheckoutWatcher linkWatcher;
 
-  final linkWatcher = phone.watchReturnLink(
-    options.returnUrl,
-    (url) => result.resolve(
+  void onLink(String url) {
+    if (!_answers(url, options.expectedInvoiceId)) {
+      passedOver = true;
+      linkWatcher.stop();
+      linkWatcher = phone.watchReturnLink(options.returnUrl, onLink);
+
+      return;
+    }
+
+    result.resolve(
       resolveReturn(url, expectedInvoiceId: options.expectedInvoiceId),
-    ),
-  );
+    );
+  }
+
+  linkWatcher = phone.watchReturnLink(options.returnUrl, onLink);
+
   final dismissalWatcher = phone.watchDismissal(() => dismissed.resolve(null));
 
   try {
@@ -123,13 +136,44 @@ Future<CheckoutResult> runBrowserCheckout(
 
     final arrived = await _withGrace(result.future, phone.grace);
 
-    return arrived ?? cancelledResult(closedByPayerMessage);
+    return arrived ??
+        (passedOver
+            ? _closedUnconfirmed
+            : cancelledResult(closedByPayerMessage));
   } finally {
     linkWatcher.stop();
     dismissalWatcher.stop();
     await _ignoringFailure(phone.closeSheet);
   }
 }
+
+/// Whether a return link can be this checkout's answer.
+///
+/// The browser sheet hears every link the app is opened with, and a late link from an
+/// earlier checkout, or a made-up one, reaches it exactly as this checkout's own does. Bound
+/// to an invoice, a link naming another invoice, or none, is not this checkout answering:
+/// taken, it would end the checkout the payer is still in with a decline or `wrongInvoice`
+/// while the real payment may yet finish. The sheet goes on waiting for its own.
+///
+/// The invoice is read even from a link whose result cannot be: a server that cannot say
+/// how the charge ended still names the invoice, and that link is this checkout's answer.
+bool _answers(String url, Object? expectedInvoiceId) =>
+    expectedInvoiceId == null ||
+    invoiceIdMatches(
+      expected: expectedInvoiceId,
+      reported: readReturnInvoiceId(url),
+    );
+
+/// The result for a sheet that closed with no answer after it had passed over a link.
+///
+/// On Android any link to the app brings it to the front, and that reads exactly like the
+/// payer closing the sheet. The payer may still be paying in the browser behind the app,
+/// so the close is one nobody can confirm, never a cancel.
+const CheckoutResult _closedUnconfirmed = CheckoutResult(
+  status: CheckoutStatus.notPaid,
+  code: CheckoutResultCode.outcomeUnknown,
+  message: closedByPayerMessage,
+);
 
 /// The result if it arrives within [grace], or null when the grace period runs out first.
 Future<CheckoutResult?> _withGrace(

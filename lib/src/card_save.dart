@@ -56,9 +56,9 @@ class CardSaveResult {
 
   /// Why this is not a save, when the reason is worth branching on.
   ///
-  /// Only [CheckoutResultCode.unreadableReturnLink] and [CheckoutResultCode.wrongInvoice]
-  /// can appear. A card the gateway refused carries no code, exactly as a declined payment
-  /// does not.
+  /// Only [CheckoutResultCode.unreadableReturnLink], [CheckoutResultCode.wrongInvoice] and
+  /// [CheckoutResultCode.outcomeUnknown] can appear. A card the gateway refused carries no
+  /// code, exactly as a declined payment does not.
   final CheckoutResultCode? code;
 
   /// Text for the payer, in the language the checkout produced it in.
@@ -140,6 +140,9 @@ CardSaveResult readCardSave(String url, {Object? expectedInvoiceId}) {
 /// is read off that link rather than off the payment verdict: a payment reader has already
 /// decided that an unpaid invoice is not a success, which for a verification run is exactly
 /// backwards.
+///
+/// A checkout that went with no link and nobody able to confirm it keeps its
+/// [CheckoutResultCode.outcomeUnknown]: the card may have been saved, which is not a bug.
 CardSaveResult cardSaveFromCheckout(CheckoutResult checkout,
     {Object? expectedInvoiceId}) {
   if (checkout.status == CheckoutStatus.cancelled) {
@@ -152,7 +155,7 @@ CardSaveResult cardSaveFromCheckout(CheckoutResult checkout,
   if (link == null) {
     return CardSaveResult(
       status: CardSaveStatus.notSaved,
-      code: CheckoutResultCode.unreadableReturnLink,
+      code: checkout.code ?? CheckoutResultCode.unreadableReturnLink,
       message: checkout.message ?? _unreadableMessage,
     );
   }

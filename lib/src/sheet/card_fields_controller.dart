@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -93,6 +94,9 @@ class CardFieldsController extends ChangeNotifier {
   bool _disposed = false;
   CardFieldsSnapshot _snapshot = const CardFieldsSnapshot();
 
+  /// The code sent with the charge in flight, which its answer has to carry back.
+  String? _attempt;
+
   /// Everything the box knows about itself, for a sheet that wants it in one piece.
   CardFieldsSnapshot get snapshot => _snapshot;
 
@@ -108,7 +112,7 @@ class CardFieldsController extends ChangeNotifier {
   /// True once the charge is running and can no longer be called off.
   bool get isCharging => _snapshot.charging;
 
-  /// True once the gateway has this attempt's charge, whatever it answered since.
+  /// True from when the gateway has this attempt's charge until it answers.
   bool get chargeStarted => _snapshot.chargeStarted;
 
   /// What will actually be charged, in minor units, once the gateway has said.
@@ -137,6 +141,7 @@ class CardFieldsController extends ChangeNotifier {
       return;
     }
 
+    _attempt = _newAttempt();
     _apply(
       _snapshot
           .copyWith(charging: true, chargeStarted: false)
@@ -144,8 +149,25 @@ class CardFieldsController extends ChangeNotifier {
     );
 
     await _webView.runJavaScript(
-      payCommand(billing: billing, keepTheCard: keepsTheCard),
+      payCommand(
+        billing: billing,
+        keepTheCard: keepsTheCard,
+        attempt: _attempt,
+      ),
     );
+  }
+
+  /// A fresh code for one charge: 16 random bytes, as hex.
+  ///
+  /// From the platform's secure source, because the code is only worth anything while
+  /// nothing outside the page can guess it.
+  static String _newAttempt() {
+    final random = Random.secure();
+
+    return List<String>.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
 
   /// Takes the page down with the box.
@@ -204,19 +226,36 @@ class CardFieldsController extends ChangeNotifier {
   /// on, so the page it was given is the only one that may hold it. A frame is left alone:
   /// the gateway renders the card number and the security code in its own frames, and the
   /// SDK frames the issuer's 3-D Secure step here too.
+  ///
+  /// A page sent elsewhere before its fields are live never mounts them, and the box would
+  /// sit empty with nothing to say why: that is reported as a page on the wrong origin, so
+  /// the sheet hands the payer over as it does for one.
   NavigationDecision _judge(NavigationRequest request) {
     final mine = !request.isMainFrame || session.servesFrom(request.url);
+
+    if (!mine && !isReady) {
+      _reportWrongOrigin();
+    }
 
     return mine ? NavigationDecision.navigate : NavigationDecision.prevent;
   }
 
-  /// Tells the sheet the page is on the wrong origin, once this controller exists.
+  /// True once the sheet has been told the page is on the wrong origin.
+  bool _wrongOriginReported = false;
+
+  /// Tells the sheet the page is on the wrong origin, once.
   ///
-  /// A microtask rather than a call from here: this runs while the constructor is still
+  /// A microtask rather than a call from here: this can run while the constructor is still
   /// running, and a listener that reaches back for the controller would find a field that
   /// is still being initialised. Nothing can have reached the page by then either, so
-  /// nothing is lost by letting the turn finish first.
+  /// nothing is lost by letting the turn finish first. Once, because a page can be sent
+  /// elsewhere more than once, and the sheet hands the payer over only once.
   void _reportWrongOrigin() {
+    if (_wrongOriginReported) {
+      return;
+    }
+
+    _wrongOriginReported = true;
     scheduleMicrotask(
       () => _fail(
         const FieldsError(
@@ -252,9 +291,20 @@ class CardFieldsController extends ChangeNotifier {
   ///
   /// The channel is shared with everything the page frames, and neither platform names the
   /// sender of a message. So the box reports one payment only: the one it asked for, while
-  /// it is still waiting for the answer.
-  bool _answersNoCharge(FieldsEvent event) =>
-      event is FieldsPayment && !_snapshot.charging;
+  /// it is still waiting for the answer, carrying the code that charge was sent with. The
+  /// issuer's challenge is framed in the box while the charge waits, and a frame from
+  /// another site cannot read what the host handed the page.
+  ///
+  /// A failure while the charge runs is held to the same code: it ends the charge and frees
+  /// the sheet, and one from another frame would do that while the real charge can still go
+  /// through. A failure with no charge running is taken from the page as it comes.
+  bool _answersNoCharge(FieldsEvent event) => switch (event) {
+        FieldsPayment(:final attempt) =>
+          !_snapshot.charging || _attempt == null || attempt != _attempt,
+        FieldsError(:final attempt) =>
+          _snapshot.charging && _attempt != null && attempt != _attempt,
+        _ => false,
+      };
 
   void _receive(String raw) {
     final event = parseFieldsEvent(raw);

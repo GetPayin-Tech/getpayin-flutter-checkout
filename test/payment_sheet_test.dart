@@ -10,6 +10,7 @@ import 'package:getpayin_checkout/getpayin_checkout.dart';
 import 'package:getpayin_checkout/src/core/session_guard.dart';
 import 'package:getpayin_checkout/src/sessions/deep_link.dart';
 import 'package:getpayin_checkout/src/sheet/sheet_parts.dart';
+import 'package:getpayin_checkout/src/webview/wallet_settings.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'support/fake_launcher.dart';
@@ -54,6 +55,7 @@ void main() {
     void Function(FieldsError error)? onHandover,
     Duration successPause = Duration.zero,
     String origin = testOrigin,
+    Object? expectedInvoiceId = 90210,
   }) {
     return PaymentSheetConfiguration(
       collectBillingAddress: collectBillingAddress,
@@ -62,12 +64,33 @@ void main() {
       session: testFieldsSession(origin: origin),
       fieldsPageUrl: testFieldsPageUrl,
       returnUrl: testReturnUrl,
-      expectedInvoiceId: 90210,
+      expectedInvoiceId: expectedInvoiceId,
       amountLabel: r'$97.42',
       wallets: wallets,
       savedCards: savedCards,
       chargeSavedCard: chargeSavedCard,
       fallBackToHostedCheckout: fallBackToHostedCheckout,
+    );
+  }
+
+  /// A sheet with a saved card whose charge answers only when the test says so.
+  PaymentSheetConfiguration slowSavedCard(
+    Completer<CheckoutResult> answer, {
+    Duration successPause = Duration.zero,
+  }) {
+    return PaymentSheetConfiguration(
+      session: testFieldsSession(),
+      fieldsPageUrl: testFieldsPageUrl,
+      returnUrl: testReturnUrl,
+      expectedInvoiceId: 90210,
+      amountLabel: r'$97.42',
+      successPause: successPause,
+      wallets: const <PaymentWallet>[PaymentWallet.googlePay],
+      savedCards: const <SavedCard>[
+        SavedCard(id: 'pm_1', last4: '7492'),
+        SavedCard(id: 'pm_2', last4: '8216'),
+      ],
+      chargeSavedCard: (_) => answer.future,
     );
   }
 
@@ -109,6 +132,32 @@ void main() {
 
   void postToCard(Map<String, Object?> event) =>
       cardBox().post(jsonEncode(event));
+
+  /// The code the card box sent with its last charge, which the answer has to carry.
+  String chargeCode() {
+    final pay =
+        cardBox().scripts.lastWhere((script) => script.contains('.pay('));
+
+    return RegExp(r'"attempt":"([0-9a-f]+)"').firstMatch(pay)!.group(1)!;
+  }
+
+  /// Answers the card box's last charge the way its own page does.
+  void answerTheCharge(Map<String, Object?> payment) => postToCard(
+        <String, Object?>{
+          'type': 'payment',
+          ...payment,
+          'attempt': chargeCode(),
+        },
+      );
+
+  /// Fails the card box's last charge the way its own page does.
+  void failTheCharge(Map<String, Object?> error) => postToCard(
+        <String, Object?>{
+          'type': 'error',
+          ...error,
+          'attempt': chargeCode(),
+        },
+      );
 
   Future<void> completeTheCard(WidgetTester tester) async {
     postToCard(<String, Object?>{
@@ -202,6 +251,61 @@ void main() {
     expect((await pending).status, CheckoutStatus.paid);
   });
 
+  /*
+   * A saved card's answer is a claim of payment like the return link's and the fields'. A
+   * charge on a token makes its own invoice, though, so it is held to what it says about
+   * that invoice, not to the one the sheet was opened for.
+   */
+  group("a saved card's answer", () {
+    Future<CheckoutResult> payWithSavedCard(
+      WidgetTester tester,
+      CheckoutResult answer,
+    ) async {
+      final pending = await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (_) async => answer,
+        ),
+      );
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      return pending;
+    }
+
+    testWidgets('is refused when the invoice it names is not paid',
+        (tester) async {
+      final result = await payWithSavedCard(
+        tester,
+        const CheckoutResult(
+          status: CheckoutStatus.paid,
+          invoiceId: '90211',
+          invoiceStatus: 'UNPAID',
+        ),
+      );
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.unexpectedInvoiceStatus);
+    });
+
+    testWidgets('is not held to the invoice the sheet opened for',
+        (tester) async {
+      final result = await payWithSavedCard(
+        tester,
+        const CheckoutResult(
+          status: CheckoutStatus.paid,
+          invoiceId: '90211',
+          invoiceStatus: 'PAID',
+        ),
+      );
+
+      expect(result.status, CheckoutStatus.paid);
+      expect(result.invoiceId, '90211');
+    });
+  });
+
   testWidgets('takes a new card and settles on what PayLink answered',
       (tester) async {
     final pending = await openSheet(tester, configuration());
@@ -219,10 +323,9 @@ void main() {
     await tester.tap(find.text(r'Pay $97.42'));
     await pumpFrames(tester);
 
-    expect(cardBox().scripts.last, contains('__paylinkHost.pay(null)'));
+    expect(cardBox().scripts.last, contains('__paylinkHost.pay({"attempt":'));
 
-    postToCard(<String, Object?>{
-      'type': 'payment',
+    answerTheCharge(<String, Object?>{
       'success': true,
       'invoiceId': 90210,
       'paidStatus': 'PAID',
@@ -233,6 +336,33 @@ void main() {
 
     expect(result.status, CheckoutStatus.paid);
     expect(result.invoiceId, '90210');
+  });
+
+  /*
+   * `/init` already said which invoice this payment is for, so an app that leaves
+   * `expectedInvoiceId` out still has its results held to that one.
+   */
+  testWidgets('holds a result to the invoice the session names when given none',
+      (tester) async {
+    final pending =
+        await openSheet(tester, configuration(expectedInvoiceId: null));
+
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+    await completeTheCard(tester);
+    await tester.tap(find.text(r'Pay $97.42'));
+    await pumpFrames(tester);
+    answerTheCharge(<String, Object?>{
+      'success': true,
+      'invoiceId': 4444,
+      'paidStatus': 'PAID',
+    });
+    await pumpFrames(tester);
+
+    final result = await pending;
+
+    expect(result.status, CheckoutStatus.notPaid);
+    expect(result.code, CheckoutResultCode.wrongInvoice);
   });
 
   /*
@@ -275,8 +405,7 @@ void main() {
     await tester.tap(find.text(r'Pay $97.42'));
     await pumpFrames(tester);
 
-    postToCard(<String, Object?>{
-      'type': 'payment',
+    answerTheCharge(<String, Object?>{
       'success': false,
       'invoiceId': 90210,
       'message': 'Card declined',
@@ -462,8 +591,7 @@ void main() {
       await tester.tap(find.text(r'Pay $97.42'));
       await pumpFrames(tester);
 
-      postToCard(<String, Object?>{
-        'type': 'payment',
+      answerTheCharge(<String, Object?>{
         'success': true,
         'invoiceId': 90210,
         'paidStatus': 'PAID',
@@ -492,8 +620,7 @@ void main() {
       await tester.tap(find.text(r'Pay $97.42'));
       await pumpFrames(tester);
 
-      postToCard(<String, Object?>{
-        'type': 'payment',
+      answerTheCharge(<String, Object?>{
         'success': true,
         'invoiceId': 90210,
         'paidStatus': 'PAID',
@@ -519,8 +646,7 @@ void main() {
       await tester.tap(find.text(r'Pay $97.42'));
       await pumpFrames(tester);
 
-      postToCard(<String, Object?>{
-        'type': 'payment',
+      answerTheCharge(<String, Object?>{
         'success': false,
         'message': 'Your card was declined.',
       });
@@ -699,6 +825,39 @@ void main() {
       );
     });
 
+    testWidgets('hands over with the country list open over the sheet',
+        (tester) async {
+      final reasons = <FieldsError>[];
+
+      (await openSheet(
+        tester,
+        configuration(collectBillingAddress: true, onHandover: reasons.add),
+        withProvider: true,
+      ))
+          .ignore();
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+
+      final countries = find.byType(DropdownButton<String>).first;
+
+      await tester.ensureVisible(countries);
+      await pumpFrames(tester);
+      await tester.tap(countries);
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{'type': 'error', 'code': 'session_invalid'});
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(
+        reasons.single.failure,
+        FieldsFailure.sessionInvalid,
+        reason:
+            'the list is a route too, and only the sheet is closed with this',
+      );
+    });
+
     testWidgets('says nothing for a decline the payer can retry',
         (tester) async {
       final reasons = <FieldsError>[];
@@ -739,6 +898,11 @@ void main() {
         withProvider: true,
       );
 
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
       postToCard(<String, Object?>{'type': 'charging'});
       await pumpFrames(tester);
 
@@ -748,8 +912,7 @@ void main() {
     testWidgets('is not reported as a checkout that never ran', (tester) async {
       final pending = await startCharging(tester, fallBack: false);
 
-      postToCard(<String, Object?>{
-        'type': 'error',
+      failTheCharge(<String, Object?>{
         'code': 'a_code_this_package_does_not_know',
         'message': 'The answer was lost.',
       });
@@ -764,8 +927,7 @@ void main() {
     testWidgets('never sends the payer to pay a second time', (tester) async {
       final pending = await startCharging(tester);
 
-      postToCard(<String, Object?>{
-        'type': 'error',
+      failTheCharge(<String, Object?>{
         'code': 'session_invalid',
         'message': 'The answer was lost.',
       });
@@ -786,8 +948,7 @@ void main() {
       await tester.tapAt(const Offset(10, 10));
       await pumpFrames(tester);
 
-      postToCard(<String, Object?>{
-        'type': 'payment',
+      answerTheCharge(<String, Object?>{
         'success': true,
         'invoiceId': 90210,
         'paidStatus': 'PAID',
@@ -895,6 +1056,1399 @@ void main() {
   });
 
   /*
+   * A payer must always be able to leave, even mid-charge, because a charge can hang. But a
+   * charge that is running when they leave may still go through, so every way out of one
+   * says the payment could not be confirmed: never cancelled, which reads as nothing having
+   * happened.
+   */
+  group('a way out of a running charge', () {
+    const strings = PaymentSheetStrings();
+
+    /// Opens the card screen of a complete card and taps Pay on it.
+    Future<Future<CheckoutResult>> payByCard(WidgetTester tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      return pending;
+    }
+
+    testWidgets('closing during a saved-card charge reports it unconfirmed',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        slowSavedCard(Completer<CheckoutResult>()),
+      );
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      final result = await pending;
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets(
+        'the card screen offers a close instead of back while it charges',
+        (tester) async {
+      final pending = await payByCard(tester);
+
+      expect(find.byTooltip(strings.back), findsNothing);
+
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('the bank check can be closed, and that reports it unconfirmed',
+        (tester) async {
+      final pending = await payByCard(tester);
+
+      postToCard(<String, Object?>{
+        'type': 'authenticating',
+        'stage': 'challenge',
+      });
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('Android Back while the issuer is asked leaves the sheet open',
+        (tester) async {
+      final pending = await payByCard(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      postToCard(<String, Object?>{'type': 'authenticating'});
+      await pumpFrames(tester);
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(
+        settled,
+        isNull,
+        reason: 'the SDK goes on to charge after the issuer answers',
+      );
+    });
+
+    testWidgets('an unconfirmed charge is told in the sheet own words',
+        (tester) async {
+      final pending = await payByCard(tester);
+
+      postToCard(<String, Object?>{'type': 'charging'});
+      await pumpFrames(tester);
+      failTheCharge(<String, Object?>{
+        'code': 'a_code_this_package_does_not_know',
+        'message': 'Please try another card.',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).message,
+        strings.outcomeUnknown,
+        reason: 'the page text could invite a second payment',
+      );
+    });
+
+    testWidgets('a charge that answers after the payer left changes nothing',
+        (tester) async {
+      final answer = Completer<CheckoutResult>();
+      final pending = await openSheet(
+        tester,
+        slowSavedCard(
+          answer,
+          successPause: const Duration(milliseconds: 1200),
+        ),
+      );
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      answer.complete(const CheckoutResult(
+        status: CheckoutStatus.paid,
+        invoiceId: '90210',
+        invoiceStatus: 'PAID',
+      ));
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+    });
+  });
+
+  /*
+   * PayLink answers a paid invoice with `already_paid` as soon as the fields open. The
+   * payer may well have paid it a minute ago in another tab, so nothing here may read as
+   * nothing having happened: an app told that creates a second payment for the order.
+   */
+  group('an invoice PayLink says is already paid', () {
+    for (final fallBack in <bool>[true, false]) {
+      testWidgets(
+          'is reported unconfirmed with the fallback ${fallBack ? 'on' : 'off'}',
+          (tester) async {
+        final pending = await openSheet(
+          tester,
+          configuration(fallBackToHostedCheckout: fallBack),
+          withProvider: true,
+        );
+
+        CheckoutResult? settled;
+
+        unawaited(pending.then((result) => settled = result));
+
+        postToCard(<String, Object?>{
+          'type': 'error',
+          'code': 'already_paid',
+          'message': 'This payment has already been completed.',
+        });
+        await pumpFrames(tester);
+        await pumpFrames(tester);
+
+        expect(launcher.launches, isEmpty);
+        expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+      });
+    }
+  });
+
+  /*
+   * A saved card's charge runs on your server, and the issuer can answer it with a challenge
+   * the payer has to see. Your server hands back its URL, and `chargeSavedCard` opens it as
+   * a checkout of its own while the sheet still holds the one-checkout guard.
+   */
+  testWidgets('opens a saved card bank check as its own checkout',
+      (tester) async {
+    final pending = await openSheet(
+      tester,
+      configuration(
+        savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+        chargeSavedCard: (_) => GetPayInCheckout.open(
+          testCheckoutUrl,
+          const OpenCheckoutOptions(
+            returnUrl: testReturnUrl,
+            presentation: CheckoutPresentation.inApp,
+            expectedInvoiceId: '90210',
+          ),
+        ),
+      ),
+      withProvider: true,
+    );
+
+    await tester.tap(find.text(r'Pay $97.42'));
+    await pumpFrames(tester);
+    await webView.navigate(
+      returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+    );
+    await pumpFrames(tester);
+
+    final result = await pending;
+
+    expect(result.status, CheckoutStatus.paid);
+    expect(GetPayInCheckout.busy, isFalse);
+  });
+
+  /*
+   * One sheet takes one payment at a time. With a saved card charging on your server, every
+   * other way to pay on the same sheet is one tap from a second charge for the same order.
+   */
+  group('a second payment while one runs', () {
+    const strings = PaymentSheetStrings();
+
+    testWidgets('a saved-card charge takes the wallet away until it answers',
+        (tester) async {
+      final answer = Completer<CheckoutResult>();
+
+      await openSheet(tester, slowSavedCard(answer));
+
+      expect(find.byType(WalletSurface), findsOneWidget);
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(find.byType(WalletSurface), findsNothing);
+
+      answer.complete(const CheckoutResult(
+        status: CheckoutStatus.notPaid,
+        message: 'Declined',
+      ));
+      await pumpFrames(tester);
+
+      expect(
+        find.byType(WalletSurface),
+        findsOneWidget,
+        reason: 'a decline is an answer, and the payer may pay another way',
+      );
+    });
+
+    testWidgets('a saved-card charge keeps the other methods shut',
+        (tester) async {
+      await openSheet(tester, slowSavedCard(Completer<CheckoutResult>()));
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.tap(find.text(strings.newCard), warnIfMissed: false);
+      await pumpFrames(tester);
+
+      expect(find.text(strings.addNewCard), findsNothing);
+      expect(find.text(strings.viewMore), findsNothing);
+    });
+  });
+
+  /*
+   * Once the sheet has its answer, nothing after it may change what the app is told: not
+   * the payer leaving the success screen, not the app's own navigation, not a late message
+   * from the page, and not an answer that lands while the sheet is still closing.
+   */
+  group('the sheet once it knows how it ends', () {
+    const strings = PaymentSheetStrings();
+
+    /// Pays a complete card and answers it paid, leaving the success screen up.
+    Future<Future<CheckoutResult>> payAndSucceed(WidgetTester tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(successPause: const Duration(milliseconds: 1200)),
+        withProvider: true,
+      );
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      answerTheCharge(<String, Object?>{
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await tester.pump();
+
+      return pending;
+    }
+
+    testWidgets('leaving the success screen early still reports it paid',
+        (tester) async {
+      final pending = await payAndSucceed(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.binding.handlePopRoute();
+      await tester.pump(const Duration(seconds: 2));
+      await pumpFrames(tester);
+
+      expect(settled?.status, CheckoutStatus.paid);
+    });
+
+    testWidgets('a failure after the payment went through changes nothing',
+        (tester) async {
+      final pending = await payAndSucceed(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      postToCard(<String, Object?>{'type': 'error', 'code': 'session_invalid'});
+      await tester.pump(const Duration(seconds: 2));
+      await pumpFrames(tester);
+
+      expect(launcher.launches, isEmpty);
+      expect(settled?.status, CheckoutStatus.paid);
+    });
+
+    testWidgets('the app closing the sheet mid-charge reports it unconfirmed',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        slowSavedCard(Completer<CheckoutResult>()),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      tester
+          .state<NavigatorState>(find.byType(Navigator).first)
+          .popUntil((route) => route.isFirst);
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'Back is refused, but a pop made in code cannot be',
+      );
+    });
+
+    testWidgets('leaves the app its screens when they were reset under it',
+        (tester) async {
+      final answer = Completer<CheckoutResult>();
+      final pending = await openSheet(tester, slowSavedCard(answer));
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      unawaited(
+        tester
+            .state<NavigatorState>(find.byType(Navigator).first)
+            .pushAndRemoveUntil(
+              MaterialPageRoute<void>(builder: (_) => const Text('signed out')),
+              (route) => route.isFirst,
+            ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      answer.completeError(StateError('the session expired'));
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('signed out'), findsOneWidget);
+      expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('an answer while the sheet is closing leaves the app alone',
+        (tester) async {
+      final answer = Completer<CheckoutResult>();
+
+      await openSheet(tester, slowSavedCard(answer));
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await tester.pump();
+
+      answer.complete(const CheckoutResult(
+        status: CheckoutStatus.paid,
+        invoiceId: '90210',
+        invoiceStatus: 'PAID',
+      ));
+      await tester.pump();
+      await pumpFrames(tester);
+
+      expect(
+        find.text('checkout'),
+        findsOneWidget,
+        reason: 'a second pop would take the screen under the sheet with it',
+      );
+    });
+
+    testWidgets('the wallet marking a charge after the sheet left is ignored',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+      wallet.changeUrl('$testFieldsPageUrl#paylink-charging');
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+    });
+
+    /*
+     * A saved card's challenge is a checkout of its own, and a payer can close it after
+     * answering the issuer, with the charge already on its way. The sheet cannot tell that
+     * from closing before answering.
+     */
+    testWidgets(
+        'a saved card whose challenge was closed reports it unconfirmed',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (_) async => cancelledResult(closedByPayerMessage),
+        ),
+      );
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+    });
+  });
+
+  /*
+   * A wallet charge runs on the page after the wallet's own sheet has closed, for the few
+   * seconds the gateway takes to answer. The surface has no channel, so the page marks its
+   * own address when the charge is out, and the sheet holds still until the answer.
+   */
+  group('a wallet charge', () {
+    const strings = PaymentSheetStrings();
+
+    /// The wallet page's address once it has said its charge is out.
+    String charging() => '$testFieldsPageUrl#paylink-charging';
+
+    testWidgets('holds the sheet open from the moment it is out',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      walletSurface().changeUrl(charging());
+      await pumpFrames(tester);
+      await tester.binding.handlePopRoute();
+      await tester.tapAt(const Offset(10, 10));
+      await pumpFrames(tester);
+
+      expect(settled, isNull);
+    });
+
+    testWidgets('counts the mark the same when it arrives as a navigation',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      expect(
+        await walletSurface().navigate(charging()),
+        NavigationDecision.navigate,
+      );
+      await pumpFrames(tester);
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(settled, isNull, reason: 'iOS reports a fragment as a navigation');
+    });
+
+    testWidgets('keeps the wallet and shuts everything else while it runs',
+        (tester) async {
+      await openSheet(
+        tester,
+        slowSavedCard(Completer<CheckoutResult>()),
+      );
+
+      walletSurface().changeUrl(charging());
+      await pumpFrames(tester);
+
+      expect(
+        find.byType(WalletSurface),
+        findsOneWidget,
+        reason: 'the surface is what the answer arrives on',
+      );
+
+      await tester.tap(find.text(strings.newCard), warnIfMissed: false);
+      await pumpFrames(tester);
+
+      expect(find.text(strings.addNewCard), findsNothing);
+    });
+
+    testWidgets('closing while it runs reports it unconfirmed', (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      walletSurface().changeUrl(charging());
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('an answer after the payer left changes nothing',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('an answer while the sheet is closing changes nothing',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await tester.pump();
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(
+        (await pending).code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'the button is still on screen while the sheet slides away',
+      );
+    });
+
+    testWidgets('still settles on the answer after the mark', (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.paid);
+    });
+
+    testWidgets('lets the payer close normally after a declined wallet',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+
+      walletSurface().changeUrl(charging());
+      await pumpFrames(tester);
+      await walletSurface().navigate(
+        returnLink('success=0&invoice_id=90210&message=Declined'),
+      );
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.cancelled);
+    });
+  });
+
+  /*
+   * The wallet's own sheet is another app's screen over this one, and the page only says its
+   * charge is out a few seconds after that sheet has closed. The page cannot see the wallet
+   * open or close; the app can, because the wallet puts it in the background. From then
+   * until a charge or an answer, leaving the sheet could lose a payment about to go through.
+   */
+  group('a wallet the payer has opened', () {
+    const strings = PaymentSheetStrings();
+
+    /// The app going to the background and coming back, for whatever reason.
+    Future<void> leaveTheApp(WidgetTester tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+    }
+
+    /// A touch on the wallet button, then the app behind the wallet's own sheet and back.
+    Future<void> visitTheWallet(WidgetTester tester) async {
+      await tester.tapAt(tester.getCenter(find.byType(WalletSurface)));
+      await tester.pump();
+      await leaveTheApp(tester);
+    }
+
+    testWidgets('holds the sheet before its charge is out', (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await visitTheWallet(tester);
+      await tester.binding.handlePopRoute();
+      await tester.tapAt(const Offset(10, 10));
+      await pumpFrames(tester);
+
+      expect(settled, isNull);
+    });
+
+    testWidgets('keeps the wallet and shuts everything else while it is open',
+        (tester) async {
+      await openSheet(tester, slowSavedCard(Completer<CheckoutResult>()));
+
+      await visitTheWallet(tester);
+      await pumpFrames(tester);
+
+      expect(
+        find.byType(WalletSurface),
+        findsOneWidget,
+        reason: 'the surface is what the charge runs on',
+      );
+
+      await tester.tap(find.text(strings.newCard), warnIfMissed: false);
+      await pumpFrames(tester);
+
+      expect(find.text(strings.addNewCard), findsNothing);
+    });
+
+    testWidgets('lets go when no charge comes after the payer is back',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 15));
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+
+      expect(find.text(strings.addNewCard), findsOneWidget);
+    });
+
+    testWidgets('closing after a wallet that never answered is unconfirmed',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 15));
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'a wallet slower than the wait can still charge',
+      );
+    });
+
+    testWidgets('the wait running out does not free a charge that is out',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 4));
+      walletSurface().changeUrl('$testFieldsPageUrl#paylink-charging');
+      await tester.pump(const Duration(seconds: 15));
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(settled, isNull);
+    });
+
+    testWidgets('a charge marked after the wait ran out holds it again',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 15));
+      walletSurface().changeUrl('$testFieldsPageUrl#paylink-charging');
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(settled, isNull);
+    });
+
+    testWidgets('leaving the app without touching the wallet holds nothing',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await leaveTheApp(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).status,
+        CheckoutStatus.cancelled,
+        reason: 'a payer may pull down a notification or take a call',
+      );
+    });
+
+    testWidgets('a touch on the wallet long before leaving holds nothing',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await tester.tapAt(tester.getCenter(find.byType(WalletSurface)));
+      await tester.pump(const Duration(seconds: 11));
+      await leaveTheApp(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.cancelled);
+    });
+
+    /*
+     * A wallet button that leaves the screen keeps its page, and the page goes on with a
+     * wallet charge it was still preparing. After the wait has run out, that is a charge the
+     * sheet no longer holds still for, beside whatever the payer pays with next.
+     */
+    testWidgets('empties a wallet button that leaves the screen',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+
+      expect(wallet.loaded.last, Uri.parse('about:blank'));
+    });
+
+    testWidgets('a wallet button that left the screen cannot settle the sheet',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(
+        tester,
+        slowSavedCard(Completer<CheckoutResult>()),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final wallet = walletSurface();
+
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 15));
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      wallet.changeUrl('$testFieldsPageUrl#paylink-charging');
+      await pumpFrames(tester);
+
+      expect(
+        find.byType(WalletSurface),
+        findsNothing,
+        reason: 'a late mark from it must not bring a wallet back',
+      );
+
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        settled,
+        isNull,
+        reason:
+            'the saved card is still charging, and its answer is the one due',
+      );
+    });
+
+    testWidgets('a wallet button that left lets only the blank page load',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+
+      expect(
+        await wallet.navigate('about:blank'),
+        NavigationDecision.navigate,
+        reason: 'iOS asks before loading even the blank page',
+      );
+      expect(
+        await wallet.navigate(testFieldsPageUrl),
+        NavigationDecision.prevent,
+      );
+    });
+
+    testWidgets('a wallet button that leaves before its page loads never loads',
+        (tester) async {
+      final settings = Completer<void>();
+
+      walletSettingsApplier = (controller, applied) => settings.future;
+      addTearDown(() => walletSettingsApplier = applyWalletSettings);
+
+      await openSheet(tester, configuration());
+
+      final wallet = webView.controllers.last;
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+      settings.complete();
+      await pumpFrames(tester);
+
+      expect(
+        wallet.loaded,
+        <Uri>[Uri.parse('about:blank')],
+        reason: 'Android never asks before an app loads its own page',
+      );
+    });
+
+    testWidgets('leaving during a saved-card charge brings no wallet back',
+        (tester) async {
+      await openSheet(tester, slowSavedCard(Completer<CheckoutResult>()));
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await leaveTheApp(tester);
+      await pumpFrames(tester);
+
+      expect(
+        find.byType(WalletSurface),
+        findsNothing,
+        reason: 'a wallet during a saved card is a second way to pay',
+      );
+    });
+
+    testWidgets('waits again from the payer coming back a second time',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 10));
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 10));
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(settled, isNull);
+    });
+
+    testWidgets('a declined wallet closes as cancelled again', (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+
+      await visitTheWallet(tester);
+      await walletSurface().navigate(
+        returnLink('success=0&invoice_id=90210&message=Declined'),
+      );
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.cancelled);
+    });
+
+    testWidgets('leaving the app holds nothing when no wallet is offered',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(wallets: const <PaymentWallet>[PaymentWallet.applePay]),
+      );
+
+      await leaveTheApp(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.cancelled);
+    });
+
+    testWidgets('leaving the app from the card form holds nothing',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+      await leaveTheApp(tester);
+      await tester.tap(find.byTooltip(strings.back));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).status,
+        CheckoutStatus.cancelled,
+        reason: 'a payer may switch apps to copy their card number',
+      );
+    });
+  });
+
+  /*
+   * A wallet charge can go out the moment the sheet stops holding for it: the payer pays a
+   * saved card in the same instant, or has already moved on to the card form. Its answer
+   * then has nowhere to arrive, so whatever the sheet reports next could hide a second
+   * payment, and it is reported unconfirmed instead.
+   */
+  group('a wallet charge nobody was holding for', () {
+    const strings = PaymentSheetStrings();
+
+    String charging() => '$testFieldsPageUrl#paylink-charging';
+
+    const paid = CheckoutResult(
+      status: CheckoutStatus.paid,
+      invoiceId: '90210',
+      invoiceStatus: 'PAID',
+    );
+
+    testWidgets('marked as a saved card starts makes its answer unconfirmed',
+        (tester) async {
+      final answer = Completer<CheckoutResult>();
+      final pending = await openSheet(tester, slowSavedCard(answer));
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      answer.complete(paid);
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets(
+        'marked after its button left makes the next answer unconfirmed',
+        (tester) async {
+      final answer = Completer<CheckoutResult>();
+      final pending = await openSheet(tester, slowSavedCard(answer));
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(wallet.loaded.last, Uri.parse('about:blank'));
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      answer.complete(paid);
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('closes the sheet unconfirmed on a decline that follows it',
+        (tester) async {
+      final answer = Completer<CheckoutResult>();
+      final pending = await openSheet(tester, slowSavedCard(answer));
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      answer.complete(const CheckoutResult(
+        status: CheckoutStatus.notPaid,
+        message: 'Declined',
+      ));
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'another try now could be a second payment',
+      );
+    });
+
+    testWidgets('marked while the payer is on the card form ends the sheet',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+
+      expect(wallet.loaded.last, Uri.parse('about:blank'));
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('counts a late mark the same when it arrives as a navigation',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+
+      expect(wallet.loaded.last, Uri.parse('about:blank'));
+
+      await wallet.navigate(charging());
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'iOS reports a fragment as a navigation',
+      );
+    });
+
+    testWidgets('marked by a button that left counts once a new one is shown',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final old = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.back));
+      await pumpFrames(tester);
+
+      expect(walletSurface(), isNot(same(old)));
+      expect(old.loaded.last, Uri.parse('about:blank'));
+
+      old.changeUrl(charging());
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason:
+            'that charge answers on a page that is gone, not on the new one',
+      );
+    });
+
+    testWidgets(
+        'closes the sheet unconfirmed on a card failure that follows it',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      failTheCharge(<String, Object?>{
+        'code': 'authentication_abandoned',
+        'message': 'Card verification was not completed.',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'another try now could be a second payment',
+      );
+    });
+  });
+
+  /*
+   * A wallet charge answers on its own button, so from the page's mark until the answer the
+   * payer stays where that button is. The row they tap was drawn before the mark arrived, so
+   * the sheet checks again when the tap lands.
+   */
+  group('a wallet charge the sheet is holding for', () {
+    const strings = PaymentSheetStrings();
+
+    String charging() => '$testFieldsPageUrl#paylink-charging';
+
+    testWidgets('keeps the payer off the card form', (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+
+      expect(find.text(strings.addNewCard), findsNothing);
+
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.paid);
+    });
+
+    testWidgets('keeps the payer off the saved cards', (tester) async {
+      await openSheet(tester, slowSavedCard(Completer<CheckoutResult>()));
+
+      walletSurface().changeUrl(charging());
+      await tester.tap(find.text(strings.viewMore));
+      await pumpFrames(tester);
+
+      expect(find.text(strings.selectCard), findsNothing);
+    });
+  });
+
+  /*
+   * The card box loads behind the first screen, so it can fail while the wallet or a saved
+   * card is charging. Handing the payer over then would open a second way to pay for the
+   * same order, so the sheet waits for that payment's answer first.
+   */
+  group('a card form that fails while another payment is out', () {
+    String charging() => '$testFieldsPageUrl#paylink-charging';
+
+    void failTheCardForm() => postToCard(
+          <String, Object?>{'type': 'error', 'code': 'session_invalid'},
+        );
+
+    testWidgets('waits for a wallet charge, and hands nothing over once paid',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final reasons = <FieldsError>[];
+      final pending = await openSheet(
+        tester,
+        configuration(onHandover: reasons.add),
+        withProvider: true,
+      );
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      failTheCardForm();
+      await pumpFrames(tester);
+
+      expect(reasons, isEmpty);
+
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.paid);
+      expect(reasons, isEmpty);
+    });
+
+    testWidgets('hands over once the wallet is declined', (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final reasons = <FieldsError>[];
+
+      (await openSheet(
+        tester,
+        configuration(onHandover: reasons.add),
+        withProvider: true,
+      ))
+          .ignore();
+
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      failTheCardForm();
+      await pumpFrames(tester);
+
+      expect(reasons, isEmpty);
+
+      await wallet.navigate(
+        returnLink('success=0&invoice_id=90210&message=Declined'),
+      );
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(reasons.single.failure, FieldsFailure.sessionInvalid);
+    });
+
+    testWidgets("keeps a saved card's charge held until it is declined",
+        (tester) async {
+      final reasons = <FieldsError>[];
+      final answer = Completer<CheckoutResult>();
+      final pending = await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (_) => answer.future,
+          onHandover: reasons.add,
+        ),
+        withProvider: true,
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      failTheCardForm();
+      postToCard(<String, Object?>{
+        'type': 'error',
+        'code': 'card_invalid',
+        'message': 'Please check the card details and try again.',
+      });
+      await pumpFrames(tester);
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(settled, isNull, reason: 'the saved card is still being charged');
+      expect(reasons, isEmpty);
+
+      answer.complete(
+        const CheckoutResult(status: CheckoutStatus.notPaid, message: 'No'),
+      );
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(reasons.single.failure, FieldsFailure.sessionInvalid);
+    });
+
+    for (final fallBack in <bool>[true, false]) {
+      testWidgets(
+          'ends unconfirmed once a wallet that never answered lets go, '
+          'with the fallback ${fallBack ? 'on' : 'off'}', (tester) async {
+        final reasons = <FieldsError>[];
+        final pending = await openSheet(
+          tester,
+          configuration(
+            fallBackToHostedCheckout: fallBack,
+            onHandover: reasons.add,
+          ),
+          withProvider: true,
+        );
+
+        CheckoutResult? settled;
+
+        unawaited(pending.then((result) => settled = result));
+
+        await tester.tapAt(tester.getCenter(find.byType(WalletSurface)));
+        await tester.pump();
+        tester.binding
+            .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        await tester.pump();
+        failTheCardForm();
+        await tester.pump();
+        tester.binding
+            .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await pumpFrames(tester);
+
+        expect(settled, isNull);
+
+        await tester.pump(const Duration(seconds: 15));
+        await pumpFrames(tester);
+
+        expect(
+          reasons,
+          isEmpty,
+          reason: 'the wallet can still charge, so a second way to pay is not '
+              'offered',
+        );
+        expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+      });
+    }
+  });
+
+  /*
+   * A charge that was refused, or a bank check that never got as far as the charge, is an
+   * answer: nothing is in flight any more, and the payer is free to try again or to leave.
+   */
+  group('an attempt that ended without a payment', () {
+    /// Opens the card screen of a complete card and taps Pay on it.
+    Future<Future<CheckoutResult>> payByCard(WidgetTester tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      return pending;
+    }
+
+    testWidgets('lets the payer try again after leaving the bank check',
+        (tester) async {
+      final pending = await payByCard(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      postToCard(<String, Object?>{
+        'type': 'authenticating',
+        'stage': 'challenge',
+      });
+      await pumpFrames(tester);
+      failTheCharge(<String, Object?>{
+        'code': 'authentication_abandoned',
+        'message': 'Card verification was not completed.',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        settled,
+        isNull,
+        reason: 'the SDK asks the bank before it charges: nothing was charged',
+      );
+      expect(find.text('Card verification was not completed.'), findsOneWidget);
+      expect(find.text(r'Pay $97.42'), findsOneWidget);
+    });
+
+    testWidgets('closes as cancelled after a decline', (tester) async {
+      final pending = await payByCard(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      postToCard(<String, Object?>{'type': 'charging'});
+      await pumpFrames(tester);
+      answerTheCharge(<String, Object?>{
+        'success': false,
+        'invoiceId': 90210,
+        'message': 'Card declined',
+      });
+      await pumpFrames(tester);
+
+      await tester.tapAt(const Offset(10, 10));
+      await pumpFrames(tester);
+
+      expect(
+        settled?.status,
+        CheckoutStatus.cancelled,
+        reason: 'a decline leaves nothing in flight, so the sheet may close',
+      );
+    });
+  });
+
+  /*
    * The card box talks to one page, over a channel everything that page frames can post on,
    * and no platform names the sender of a message. So it answers one charge, the one it
    * asked for, and gives its top frame to the registered origin and nothing else.
@@ -927,9 +2481,157 @@ void main() {
       expect(find.text(const PaymentSheetStrings().addNewCard), findsOneWidget);
     });
 
+    /*
+     * While the charge runs, the issuer's challenge is framed inside the box and can post
+     * on the same channel as the page. Only the page was handed this charge's code.
+     */
+    testWidgets('is not reported as the payment while the charge runs',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{'type': 'charging'});
+
+      for (final attempt in <String?>[null, 'not-the-code']) {
+        postToCard(<String, Object?>{
+          'type': 'payment',
+          'success': true,
+          'invoiceId': 90210,
+          'paidStatus': 'PAID',
+          if (attempt != null) 'attempt': attempt,
+        });
+      }
+      await pumpFrames(tester);
+
+      expect(settled, isNull,
+          reason: 'neither carried the code of this charge');
+
+      answerTheCharge(<String, Object?>{
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await pumpFrames(tester);
+
+      expect(settled?.status, CheckoutStatus.paid);
+    });
+
+    /*
+     * A failure frees the sheet: it ends the charge and offers the other ways to pay again.
+     * One from a frame that was not handed this charge's code would do that while the
+     * real charge can still go through.
+     */
+    testWidgets('is not taken as the failure of the charge that runs',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{
+        'type': 'authenticating',
+        'stage': 'challenge',
+      });
+
+      for (final attempt in <String?>[null, 'not-the-code']) {
+        postToCard(<String, Object?>{
+          'type': 'error',
+          'code': 'authentication_failed',
+          'message': 'Made up',
+          if (attempt != null) 'attempt': attempt,
+        });
+      }
+      await pumpFrames(tester);
+
+      expect(find.text('Made up'), findsNothing);
+      expect(find.text(r'Pay $97.42'), findsNothing,
+          reason: 'the charge is still running');
+
+      answerTheCharge(<String, Object?>{
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await pumpFrames(tester);
+
+      expect(settled?.status, CheckoutStatus.paid);
+    });
+
+    /*
+     * A page sent elsewhere before it is ready never mounts its fields, and the box would
+     * sit empty with nothing to say why. That is the same as a page on the wrong origin, and
+     * is reported as one.
+     */
+    testWidgets(
+        'falls back when the card page is sent elsewhere before it is ready',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      expect(
+        await cardBox().navigate('https://elsewhere.example.com/card'),
+        NavigationDecision.prevent,
+      );
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.checkoutUnavailable);
+      expect(settled?.message, contains('registered origin'));
+    });
+
+    testWidgets('hands over once however often the page is sent elsewhere',
+        (tester) async {
+      final reasons = <FieldsError>[];
+
+      (await openSheet(
+        tester,
+        configuration(onHandover: reasons.add),
+        withProvider: true,
+      ))
+          .ignore();
+
+      await cardBox().navigate('https://elsewhere.example.com/card');
+      await cardBox().navigate('https://elsewhere.example.com/again');
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(reasons.single.failure, FieldsFailure.originNotAllowed);
+      expect(launcher.launches, hasLength(1));
+    });
+
     testWidgets('refuses a top-frame page from outside the registered origin',
         (tester) async {
-      await openSheet(tester, configuration());
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      postToCard(<String, Object?>{
+        'type': 'ready',
+        'amountMinor': 9742,
+        'currency': 'USD'
+      });
+      await pumpFrames(tester);
 
       expect(
         await cardBox().navigate('https://elsewhere.example.com/card'),
@@ -938,6 +2640,13 @@ void main() {
       expect(
         await cardBox().navigate(testFieldsPageUrl),
         NavigationDecision.navigate,
+      );
+      await pumpFrames(tester);
+
+      expect(
+        settled,
+        isNull,
+        reason: 'a live box is refused the navigation and carries on',
       );
     });
 

@@ -23,7 +23,8 @@ it. The app shows the checkout and reports what came back.
 flutter pub add getpayin_checkout
 ```
 
-Then rebuild. The web view is native code, so a hot reload will not pick it up.
+Then rebuild. The web view is native code, so a hot reload will not pick it up. For a
+version not on pub.dev yet, [Setup](doc/setup.md#install) shows the git dependency.
 
 You also need three things in place before a payment can work: a GetPayIn integration of
 type **Mobile App**, your app's URL scheme declared in `AndroidManifest.xml` and
@@ -103,17 +104,28 @@ The same payment, drawn as a payment sheet in your app: a wallet button, the pay
 cards, a card form, one pay button.
 
 ```dart
-final result = await GetPayInPaymentSheet.show(
-  context,
-  PaymentSheetConfiguration(
-    session: PayLinkFieldsSession.fromInit(payment)!,
-    fieldsPageUrl: 'https://shop.example.com/paylink-fields.html',
-    returnUrl: 'myapp://payment-return',
-    expectedInvoiceId: payment.invoiceId,
-    amountLabel: r'$97.42',
-    wallets: const [PaymentWallet.applePay, PaymentWallet.googlePay],
-  ),
-);
+final session = PayLinkFieldsSession.fromInit(payment.data);
+
+// No session means hosted card fields are off for this company: the same payment is
+// taken on the hosted checkout instead.
+final result = session == null
+    ? await GetPayInCheckout.open(
+        payment.checkoutUrl,
+        OpenCheckoutOptions(
+          returnUrl: 'myapp://payment-return',
+          expectedInvoiceId: payment.invoiceId,
+        ),
+      )
+    : await GetPayInPaymentSheet.show(
+        context,
+        PaymentSheetConfiguration(
+          session: session,
+          fieldsPageUrl: 'https://shop.example.com/paylink-fields.html',
+          returnUrl: 'myapp://payment-return',
+          amountLabel: r'$97.42',
+          wallets: const [PaymentWallet.applePay, PaymentWallet.googlePay],
+        ),
+      );
 ```
 
 The card number and security code are still rendered by the gateway, so they never reach

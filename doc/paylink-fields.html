@@ -16,9 +16,10 @@
   #box { border: 1px solid var(--border, #e6e6e6); border-radius: 8px; overflow: hidden; background: #fff; }
   #box.invalid { border-color: var(--danger, #df1b41); }
   .row { display: flex; }
+  .row[hidden] { display: none; }
   .cell { position: relative; flex: 1; height: var(--rowHeight, 56px); padding: 0 12px; display: flex; align-items: center; }
   .cell + .cell { border-left: 1px solid var(--border, #e6e6e6); }
-  .row + .row { border-top: 1px solid var(--border, #e6e6e6); }
+  .row:not([hidden]) ~ .row { border-top: 1px solid var(--border, #e6e6e6); }
   .cell > div, .cell > input { width: 100%; height: 100%; }
   input {
     border: 0; outline: 0; background: transparent; font: inherit; color: inherit;
@@ -90,9 +91,18 @@
 (function () {
   var CHANNEL = "PayLinkFields";
   var DEFAULT_SDK = "<YOUR-PAYLINK-HOST>/sdk/paylink-fields-v1.js";
+  var KNOWN_SDKS = ["<YOUR-PAYLINK-HOST>/sdk/paylink-fields-v1.js"];
+  var CHARGING = "paylink-charging";
   var fields = null;
   var started = false;
   var loading = null;
+
+  /*
+   * The code the host sent with its last charge. A failure carries it back: the channel is
+   * open to every frame on this page, and only this page was handed the code, so the host
+   * takes a failure during a charge only when it has it.
+   */
+  var attempt = null;
 
   function post(message) {
     var channel = window[CHANNEL];
@@ -103,11 +113,15 @@
   }
 
   function fail(error) {
-    post({
+    var failure = {
       type: 'error',
       code: (error && error.code) || 'unknown',
       message: (error && error.message) || 'The card could not be taken.'
-    });
+    };
+
+    if (attempt) { failure.attempt = attempt; }
+
+    post(failure);
   }
 
   /**
@@ -138,6 +152,22 @@
     });
 
     return loading;
+  }
+
+  /**
+   * The SDK address a link names, when it is one this page was made for, or null.
+   *
+   * Anyone can send a payer a link to this page, and a script loaded from it runs as your
+   * site. Compared by origin and path, so a query the PayLink adds does not matter.
+   */
+  function knownSdk(url) {
+    try {
+      var parsed = new URL(url, window.location.href);
+
+      return KNOWN_SDKS.indexOf(parsed.origin + parsed.pathname) === -1 ? null : parsed.href;
+    } catch (error) {
+      return null;
+    }
   }
 
   function applyStyle(style) {
@@ -266,12 +296,17 @@
    * A wallet payer never calls pay(), so the outcome arrives as an event. With no channel to
    * answer on, the page does what a browser would: it goes to the return link, which the
    * host reads off the navigation.
+   *
+   * The charge runs for a few seconds after the wallet's own sheet has closed, so the page
+   * says when it is out the same way, on its own address, and the host holds still until
+   * the answer.
    */
   function relayWalletOutcome(instance) {
     function go(result) {
       if (result && result.returnUrl) { window.location.href = result.returnUrl; }
     }
 
+    instance.on('charging', function () { window.location.hash = CHARGING; });
     instance.on('success', go);
     instance.on('declined', go);
   }
@@ -343,6 +378,8 @@
       var asked = options || {};
       var parts = expiry();
 
+      attempt = asked.attempt;
+
       if (asked.billing) { parts.billing = asked.billing; }
       if (asked.tokenize) { parts.tokenize = true; }
 
@@ -354,7 +391,8 @@
           reasonCode: result.reasonCode,
           invoiceId: result.invoiceId,
           paidStatus: result.paidStatus,
-          returnUrl: result.returnUrl
+          returnUrl: result.returnUrl,
+          attempt: asked.attempt
         });
       }).catch(fail);
     },
@@ -371,12 +409,13 @@
   function startFromFragment() {
     var hash = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
     var token = hash.get('t');
+    var sdkUrl = hash.has('s') ? knownSdk(hash.get('s')) : DEFAULT_SDK;
 
-    if (!token) { return; }
+    if (!token || !sdkUrl) { return; }
 
     start({
       clientToken: token,
-      sdkUrl: hash.get('s') || DEFAULT_SDK,
+      sdkUrl: sdkUrl,
       wallets: (hash.get('w') || '').split(',').filter(Boolean),
       style: {}
     }, true);

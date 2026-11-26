@@ -8,8 +8,8 @@ depend on.
 1. **A real build on a real device.** A simulator has no wallet, and the return link needs
    your app's own scheme, which is native configuration.
 2. **A GetPayIn integration of type "Mobile App"**, with **Mobile App Return Scheme** set
-   to your app's scheme. Set it in the GetPayIn dashboard under
-   **Settings → Payment Integrations**.
+   to your app's whole return link, for example `myapp://payment-return`. The dashboard
+   refuses a scheme on its own. Set it under **Settings → Payment Integrations**.
 3. **Your own server.** It calls `POST /api/integration/init` to create the payment and
    confirms the result afterwards. Your hash token stays there and never goes into the app.
 
@@ -23,10 +23,20 @@ That brings in `webview_flutter` for the in-app screen, `url_launcher` for the b
 sheet and the 3-D Secure bank links, and `app_links` for the return link. Then rebuild: the
 web view is native code.
 
+For a version that is not on pub.dev yet, depend on the repository instead:
+
+```yaml
+dependencies:
+  getpayin_checkout:
+    git:
+      url: https://github.com/GetPayin-Tech/getpayin-flutter-checkout
+      ref: main
+```
+
 ## Your app's scheme
 
-The return link is built from your app's scheme, and it has to match the integration's
-**Mobile App Return Scheme** exactly. Flutter has no `app.json`, so declare it in both
+The return link is built from your app's scheme, and it has to be the scheme of the link
+you set as the integration's **Mobile App Return Scheme**. Flutter has no `app.json`, so declare it in both
 native projects.
 
 **`android/app/src/main/AndroidManifest.xml`**, inside the `<activity>` that is already
@@ -111,6 +121,13 @@ the browser's bar off the payer's screen and makes the system back button close 
 checkout. `GetPayInCheckout.open()` needs it on iOS, and on Android once `googlePayInApp`
 is on. Without it, an in-app checkout fails with `GetPayInProviderMissingError`.
 
+It also starts listening for deep links as it mounts. On Android, `app_links` hands the links
+that reached the app before anything listened to the first listener only, and that is now
+the provider. If your app opens links of its own — a marketing link, a shared product page —
+read the one it was launched with from `AppLinks().getInitialLink()`, or subscribe to
+`uriLinkStream` before the provider mounts. A subscription made later still hears every
+link that arrives after it.
+
 It needs a `Navigator` to present on. Mounted as above it finds your app's. Mounted above
 one — in `MaterialApp.builder`, or in a `go_router` shell — hand it the same key:
 
@@ -126,6 +143,11 @@ MaterialApp(
   home: const ShopPage(),
 )
 ```
+
+Mount it this way too if your app resets its screens, on sign-out for example. Mounted in
+`home:`, the provider is one of the screens a reset removes: an open checkout then settles
+as `cancelled`, and every later in-app checkout fails with `GetPayInProviderMissingError`
+until a screen that holds a provider is shown again.
 
 ## go_router
 

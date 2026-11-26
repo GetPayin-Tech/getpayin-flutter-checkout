@@ -228,6 +228,34 @@ void main() {
     expect(completed, isEmpty);
   });
 
+  /*
+   * The detail reaches the app's log. A bank's link can carry its own one-time values, so
+   * the detail names where the link pointed and nothing that followed.
+   */
+  testWidgets('names a link the phone could not open without what it carried',
+      (tester) async {
+    final failures = <String>[];
+
+    launcher.opens = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GetPayInCheckoutView(
+          checkoutUrl: testCheckoutUrl,
+          returnUrl: testReturnUrl,
+          onComplete: (_) {},
+          onLoadError: (message, detail) => failures.add('$detail'),
+        ),
+      ),
+    );
+    await pumpFrames(tester);
+    await webView.navigate('mybank://authorise/3ds/1?otp=123456');
+    await pumpFrames(tester);
+
+    expect(failures.single, contains('mybank://authorise'));
+    expect(failures.single, isNot(contains('otp')));
+    expect(failures.single, isNot(contains('3ds')));
+  });
+
   testWidgets('says so when it is mounted where no navigator can be reached',
       (tester) async {
     await tester.pumpWidget(
@@ -269,6 +297,132 @@ void main() {
 
     expect(result.status, CheckoutStatus.cancelled);
     expect(result.message, closedByUnmountMessage);
+  });
+
+  /*
+   * An app can take the checkout screen away in its own code, and neither a pop nor a reset
+   * of its screens asks the screen first. Left unsettled, `open()` would never return and
+   * every later checkout would be refused as busy.
+   */
+  group('a checkout screen the app takes away', () {
+    const options = OpenCheckoutOptions(
+      returnUrl: testReturnUrl,
+      presentation: CheckoutPresentation.inApp,
+    );
+
+    NavigatorState navigator(WidgetTester tester) =>
+        tester.state<NavigatorState>(find.byType(Navigator).first);
+
+    /// Mounts the provider above the app's navigator, the setup a reset leaves standing.
+    Future<void> mountAboveNavigator(WidgetTester tester) {
+      final key = GlobalKey<NavigatorState>();
+
+      return tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: key,
+          builder: (context, child) =>
+              GetPayInProvider(navigatorKey: key, child: child),
+          home: const Text('shop'),
+        ),
+      );
+    }
+
+    testWidgets('settles when the app pops it', (tester) async {
+      await mountApp(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(
+        GetPayInCheckout.open(testCheckoutUrl, options)
+            .then((result) => settled = result),
+      );
+      await pumpFrames(tester);
+      navigator(tester).pop();
+      await pumpFrames(tester);
+
+      expect(settled?.status, CheckoutStatus.cancelled);
+      expect(settled?.message, closedByAppMessage);
+      expect(GetPayInCheckout.busy, isFalse);
+      expect(find.text('shop'), findsOneWidget);
+    });
+
+    testWidgets('settles when the app resets its screens', (tester) async {
+      await mountAboveNavigator(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(
+        GetPayInCheckout.open(testCheckoutUrl, options)
+            .then((result) => settled = result),
+      );
+      await pumpFrames(tester);
+      unawaited(
+        navigator(tester).pushAndRemoveUntil(
+          MaterialPageRoute<void>(builder: (_) => const Text('signed out')),
+          (route) => false,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(settled?.status, CheckoutStatus.cancelled);
+      expect(settled?.message, closedByAppMessage);
+      expect(GetPayInCheckout.busy, isFalse);
+      expect(find.text('signed out'), findsOneWidget);
+    });
+
+    testWidgets('settles without touching a navigator that is going away',
+        (tester) async {
+      await mountAboveNavigator(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(
+        GetPayInCheckout.open(testCheckoutUrl, options)
+            .then((result) => settled = result),
+      );
+      await pumpFrames(tester);
+      await tester.pumpWidget(const MaterialApp(home: Text('gone')));
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(settled?.status, CheckoutStatus.cancelled);
+    });
+
+    testWidgets('leaves a checkout opened while it is still leaving alone',
+        (tester) async {
+      await mountApp(tester);
+
+      final first = GetPayInCheckout.open(testCheckoutUrl, options);
+
+      await pumpFrames(tester);
+      await tester.tap(find.text(defaultCloseLabel));
+      await tester.pump();
+
+      expect((await first).message, closedByPayerMessage);
+
+      CheckoutResult? second;
+
+      unawaited(
+        GetPayInCheckout.open(testCheckoutUrl, options)
+            .then((result) => second = result),
+      );
+      await pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(
+        second,
+        isNull,
+        reason: 'the first screen finished leaving after the second had opened',
+      );
+      expect(GetPayInCheckout.busy, isTrue);
+      expect(find.text(defaultCloseLabel), findsOneWidget);
+
+      await tester.tap(find.text(defaultCloseLabel));
+      await pumpFrames(tester);
+
+      expect(second?.message, closedByPayerMessage);
+    });
   });
 
   testWidgets('hands a 3-D Secure bank step to the phone', (tester) async {
@@ -329,6 +483,189 @@ void main() {
     await pumpFrames(tester);
 
     expect((await pending).status, CheckoutStatus.cancelled);
+  });
+
+  /*
+   * A failure once the checkout page has loaded can come after the charge: the payer may
+   * have paid, and the page that would have said so is the one that failed. So the checkout
+   * stays where it is under the message, and closing then cannot be "nothing happened".
+   */
+  group('a failure after the checkout has loaded', () {
+    const options = OpenCheckoutOptions(
+      returnUrl: testReturnUrl,
+      presentation: CheckoutPresentation.inApp,
+    );
+
+    Future<Future<CheckoutResult>> failAfterLoading(WidgetTester tester) async {
+      await mountApp(tester);
+
+      final pending = GetPayInCheckout.open(testCheckoutUrl, options);
+
+      await pumpFrames(tester);
+      webView.finishLoading();
+      await pumpFrames(tester);
+      webView.failLoading();
+      await pumpFrames(tester);
+
+      return pending;
+    }
+
+    testWidgets('is closed as unconfirmed, never as cancelled', (tester) async {
+      final pending = await failAfterLoading(tester);
+
+      expect(find.text(defaultLoadErrorMessage), findsOneWidget);
+
+      await tester.tap(find.text(defaultCloseLabel));
+      await pumpFrames(tester);
+
+      final result = await pending;
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+      expect(result.message, defaultLoadErrorMessage);
+    });
+
+    testWidgets('is unconfirmed when the app takes the screen away too',
+        (tester) async {
+      final pending = await failAfterLoading(tester);
+
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await pumpFrames(tester);
+
+      final result = await pending;
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+      expect(result.message, defaultLoadErrorMessage);
+      expect(GetPayInCheckout.busy, isFalse);
+    });
+
+    testWidgets('is unconfirmed when the provider goes with the screen',
+        (tester) async {
+      final pending = await failAfterLoading(tester);
+
+      await tester.pumpWidget(const MaterialApp(home: Text('gone')));
+
+      final result = await pending;
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+      expect(result.message, defaultLoadErrorMessage);
+    });
+
+    testWidgets('keeps the checkout under the message for a late answer',
+        (tester) async {
+      final pending = await failAfterLoading(tester);
+
+      expect(find.byType(GetPayInCheckoutView), findsOneWidget);
+
+      await webView.navigate(
+        returnLink('success=1&invoice_id=INV-1&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.paid);
+    });
+  });
+
+  /*
+   * Android's `intent:` links name the app they are for, and the web page to show when no
+   * app takes them, but no app answers to `intent:` as written.
+   */
+  group('an intent link from a bank step', () {
+    const fallback = 'https://bank.example/3ds?ref=1';
+    const link = 'intent://auth/3ds#Intent;scheme=mybank;package=com.bank;'
+        'S.browser_fallback_url=https%3A%2F%2Fbank.example%2F3ds%3Fref%3D1;end';
+
+    Future<void> openOnBankStep(WidgetTester tester) async {
+      await mountApp(tester);
+      GetPayInCheckout.open(
+        testCheckoutUrl,
+        const OpenCheckoutOptions(
+          returnUrl: testReturnUrl,
+          presentation: CheckoutPresentation.inApp,
+        ),
+      ).ignore();
+      await pumpFrames(tester);
+      webView.finishLoading();
+      await webView.navigate(link);
+      await pumpFrames(tester);
+    }
+
+    testWidgets('opens the app it names', (tester) async {
+      await openOnBankStep(tester);
+
+      expect(launcher.launches.single.$1, 'mybank://auth/3ds');
+      expect(find.text(defaultLinkErrorMessage), findsNothing);
+    });
+
+    testWidgets('loads its web page when no app takes it', (tester) async {
+      launcher.opens = false;
+      await openOnBankStep(tester);
+
+      expect(webView.loadedUri, Uri.parse(fallback));
+      expect(find.text(defaultLinkErrorMessage), findsNothing);
+    });
+
+    testWidgets(
+        'goes straight to its web page when it names no app it may open',
+        (tester) async {
+      await mountApp(tester);
+      GetPayInCheckout.open(
+        testCheckoutUrl,
+        const OpenCheckoutOptions(
+          returnUrl: testReturnUrl,
+          presentation: CheckoutPresentation.inApp,
+        ),
+      ).ignore();
+      await pumpFrames(tester);
+      webView.finishLoading();
+      await webView.navigate(
+        'intent://x#Intent;scheme=market;'
+        'S.browser_fallback_url=https%3A%2F%2Fbank.example%2F3ds%3Fref%3D1;end',
+      );
+      await pumpFrames(tester);
+
+      expect(launcher.launches, isEmpty);
+      expect(webView.loadedUri, Uri.parse(fallback));
+    });
+  });
+
+  testWidgets('carries on through a load the web view only cancelled',
+      (tester) async {
+    await mountApp(tester);
+
+    final pending = GetPayInCheckout.open(
+      testCheckoutUrl,
+      const OpenCheckoutOptions(
+        returnUrl: testReturnUrl,
+        presentation: CheckoutPresentation.inApp,
+      ),
+    );
+
+    await pumpFrames(tester);
+    webView.finishLoading();
+    webView.failLoading(errorCode: -999);
+    await pumpFrames(tester);
+
+    expect(find.text(defaultLoadErrorMessage), findsNothing);
+
+    await webView.navigate(
+      returnLink('success=1&invoice_id=INV-1&invoice_status=PAID'),
+    );
+    await pumpFrames(tester);
+
+    expect((await pending).status, CheckoutStatus.paid);
+  });
+
+  test('never tells the payer to try again, or that nothing was charged', () {
+    for (final text in <String>[
+      defaultLoadErrorMessage,
+      defaultLinkErrorMessage,
+    ]) {
+      expect(text.toLowerCase(), isNot(contains('try again')));
+      expect(text.toLowerCase(), isNot(contains('nothing has been charged')));
+    }
   });
 
   testWidgets('reports an HTTP error on the page the payer is on',

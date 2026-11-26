@@ -56,6 +56,25 @@ void main() {
     });
   });
 
+  group('linkForLog', () {
+    test('keeps where a link points and drops what it carries', () {
+      expect(
+        linkForLog('https://user:secret@pay.example.com/checkout/9?sig=abc'),
+        'https://pay.example.com',
+      );
+      expect(linkForLog('mybank://authorise/3ds?otp=123456'),
+          'mybank://authorise');
+    });
+
+    test('names a link with no host by its scheme alone', () {
+      expect(linkForLog('tel:+15550100'), 'tel:');
+    });
+
+    test('says nothing of a value that is not a link', () {
+      expect(linkForLog('no scheme here'), 'a link with no scheme');
+    });
+  });
+
   group('isSameTarget', () {
     test('treats a missing and a present trailing slash as one target', () {
       expect(isSameTarget('myapp://return/', 'myapp://return'), isTrue);

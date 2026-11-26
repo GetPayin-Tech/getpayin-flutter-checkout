@@ -6,8 +6,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../core/intent_link.dart';
 import '../core/messages.dart';
+import '../core/navigation.dart';
 import '../core/text.dart';
+import '../core/url.dart';
 import '../platform.dart';
 import '../types.dart';
 import '../webview/app_schemes.dart';
@@ -51,6 +54,7 @@ class GetPayInCheckoutView extends StatefulWidget {
     this.loadErrorMessage,
     this.linkErrorMessage,
     this.onLoadError,
+    this.onPageLoaded,
     super.key,
   });
 
@@ -79,6 +83,15 @@ class GetPayInCheckoutView extends StatefulWidget {
 
   /// Called when the checkout cannot be shown.
   final CheckoutLoadErrorCallback? onLoadError;
+
+  /// Called each time a page of the checkout finishes loading.
+  ///
+  /// From the first one the payer can pay, so a failure reported after it is no sign that
+  /// nothing was charged: the page that would have said so may be the one that failed. A
+  /// screen of your own that is closed then should report the payment as one nobody can
+  /// confirm, never as cancelled. A failed page can finish loading too, so read this
+  /// against the failure as it arrives rather than when the payer closes.
+  final VoidCallback? onPageLoaded;
 
   @override
   State<GetPayInCheckoutView> createState() => _GetPayInCheckoutViewState();
@@ -144,7 +157,10 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
         NavigationDelegate(
           onNavigationRequest: _onNavigationRequest,
           onPageStarted: (url) => _pageUri = url,
-          onPageFinished: (_) => _stopLoading(),
+          onPageFinished: (_) {
+            _stopLoading();
+            widget.onPageLoaded?.call();
+          },
           onWebResourceError: _onWebResourceError,
           onHttpError: _onHttpError,
         ),
@@ -187,7 +203,8 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
   }
 
   void _onWebResourceError(WebResourceError error) {
-    if (isMainFrameFailure(error.isForMainFrame)) {
+    if (isMainFrameFailure(error.isForMainFrame) &&
+        !isInterruptedLoad(error.errorCode)) {
       _reportLoadFailure('${error.errorType}: ${error.description}');
     }
   }
@@ -201,16 +218,43 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
     }
   }
 
+  /// Hands [url] to the phone, or for an `intent:` link, the app it names, then its web page.
+  ///
+  /// No app answers to `intent:` as written, so it is read the way Chrome reads it, under
+  /// the same rules as every other link. What the phone cannot open is shown to the payer.
   void _handToPhone(String url) {
-    unawaited(
-      openExternalLink(url, () {
-        _reportFailure(
-          widget.linkErrorMessage,
-          defaultLinkErrorMessage,
-          detail: 'The phone could not open $url.',
-        );
-      }),
+    final intent = readIntentTargets(
+      url,
+      NavigationContext(
+        returnUrl: _handler.returnUrl,
+        ownSchemes: _handler.ownSchemes,
+        isTopFrame: true,
+      ),
     );
+    final target = intent == null ? url : intent.app;
+    final fallback = intent?.web;
+
+    void unopened() {
+      if (fallback != null) {
+        unawaited(_controller.loadRequest(Uri.parse(fallback)));
+
+        return;
+      }
+
+      _reportFailure(
+        widget.linkErrorMessage,
+        defaultLinkErrorMessage,
+        detail: 'The phone could not open a link to ${linkForLog(url)}.',
+      );
+    }
+
+    if (target == null) {
+      unopened();
+
+      return;
+    }
+
+    unawaited(openExternalLink(target, unopened));
   }
 
   void _reportLoadFailure([String? detail]) {

@@ -16,6 +16,7 @@ class CheckoutSessionHost {
 
   CheckoutRequest? _request;
   Deferred<CheckoutResult>? _pending;
+  CheckoutResult? _unconfirmed;
 
   /// The checkout being shown, or null when there is none.
   CheckoutRequest? get current => _request;
@@ -26,9 +27,21 @@ class CheckoutSessionHost {
 
     _request = request;
     _pending = pending;
+    _unconfirmed = null;
     onChange(request);
 
     return pending.future;
+  }
+
+  /// From now on, the open checkout settles as [result] if it goes without an answer.
+  ///
+  /// A failure after the checkout page had loaded may have followed a charge. A checkout
+  /// that goes after that, by the payer's close, the app's own code or the provider going,
+  /// is one nobody can confirm, never a cancelled one. An answer still settles it as sent.
+  void holdUnconfirmed(CheckoutResult result) {
+    if (_pending != null) {
+      _unconfirmed = result;
+    }
   }
 
   /// Settles the open checkout with [result].
@@ -44,13 +57,15 @@ class CheckoutSessionHost {
 
     _pending = null;
     _request = null;
+    _unconfirmed = null;
     pending.resolve(result);
     onChange(null);
   }
 
-  /// Settles the open checkout as cancelled.
+  /// Settles the open checkout as cancelled, or as unconfirmed once [holdUnconfirmed] has
+  /// said so.
   void cancel([String? message]) {
-    finish(cancelledResult(message ?? closedByPayerMessage));
+    finish(_unconfirmed ?? cancelledResult(message ?? closedByPayerMessage));
   }
 
   /// Settles anything still open, for a provider that is going away.

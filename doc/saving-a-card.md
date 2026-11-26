@@ -65,12 +65,13 @@ while the hold stands, `VOIDED` once it is released, `CAPTURED` if it was taken.
 them is a failure, and none of them is ever `PAID`.
 
 `code` is `null` for a card the gateway refused — the same way a declined payment carries
-none. Only two values can appear:
+none. Only three values can appear:
 
-| `code`                                    | What happened                                                      |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| `CheckoutResultCode.unreadableReturnLink` | The link's own fields could not be read. Alert on it; it is a bug. |
-| `CheckoutResultCode.wrongInvoice`         | The link named a different verification run.                       |
+| `code`                                    | What happened                                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `CheckoutResultCode.unreadableReturnLink` | The link's own fields could not be read. Alert on it; it is a bug.                                |
+| `CheckoutResultCode.wrongInvoice`         | The link named a different verification run.                                                      |
+| `CheckoutResultCode.outcomeUnknown`       | The checkout went without an answer when the card may have been saved. Refresh your saved cards. |
 
 ## The token is not here
 

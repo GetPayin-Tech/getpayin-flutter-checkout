@@ -58,9 +58,9 @@ class FakeWebViewPlatform extends WebViewPlatform {
   /// Reports that the page finished loading.
   void finishLoading() => delegate?.onPageFinished?.call('');
 
-  /// Reports that the page itself could not be loaded.
-  void failLoading() => delegate?.onWebResourceError?.call(
-        WebResourceError(errorCode: -1, description: 'no connection'),
+  /// Reports that the page itself could not be loaded, with the platform's [errorCode].
+  void failLoading({int errorCode = -1}) => delegate?.onWebResourceError?.call(
+        WebResourceError(errorCode: errorCode, description: 'no connection'),
       );
 
   @override
@@ -152,6 +152,20 @@ class FakeWebViewController extends PlatformWebViewController {
     onPageFinished(loaded.lastOrNull.toString());
   }
 
+  /// Reports that this controller's page changed its own address without loading a page.
+  ///
+  /// What Android reports for a fragment the page sets on itself, which never reaches the
+  /// navigation delegate there.
+  void changeUrl(String url) {
+    final onUrlChange = navigation?.onUrlChange;
+
+    if (onUrlChange == null) {
+      throw StateError('This web view does not watch its address.');
+    }
+
+    onUrlChange(UrlChange(url: url));
+  }
+
   @override
   Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async {}
 
@@ -208,6 +222,14 @@ class FakeNavigationDelegate extends PlatformNavigationDelegate {
 
   /// What the checkout does when a request answers an HTTP error.
   HttpResponseErrorCallback? onHttpError;
+
+  /// What the page's host does when the page changes its own address.
+  UrlChangeCallback? onUrlChange;
+
+  @override
+  Future<void> setOnUrlChange(UrlChangeCallback onUrlChange) async {
+    this.onUrlChange = onUrlChange;
+  }
 
   @override
   Future<void> setOnNavigationRequest(

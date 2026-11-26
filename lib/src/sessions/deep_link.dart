@@ -56,13 +56,14 @@ class ReturnLinkWatcher {
   /// The checkouts waiting for a link right now, in the order they started.
   final List<_CheckoutWatch> _watching = <_CheckoutWatch>[];
 
-  /// Links that reached the app with nothing waiting for them, refused ever after.
+  /// Links the app received while starting, refused ever after.
   ///
-  /// One link can reach the app by both of the plugin's paths, in either order, so the
-  /// decision is remembered rather than taken twice. A later link identical to a dropped
-  /// one is dropped with it: a checkout that hears nothing ends as cancelled, which is the
-  /// answer to give when there is nothing to tie a link to the payment in front of it.
-  final Set<String> _orphaned = <String>{};
+  /// The launch link can reach the app by both of the plugin's paths, in either order, so
+  /// the decision about it is remembered rather than taken twice. Only links from start-up
+  /// are kept: a link that arrives later with nobody waiting is simply dropped, so it is
+  /// not held against a checkout it reaches afterwards, and the app's own links — which can
+  /// carry anything, a sign-in token included — are not kept for the life of the process.
+  final Set<String> _startupLinks = <String>{};
 
   /// The one subscription, opened as the app starts and never cancelled.
   ///
@@ -99,7 +100,7 @@ class ReturnLinkWatcher {
   Future<void> _begin() async {
     _subscription ??= _source.links().listen(_arrived, onError: (Object _) {});
 
-    await _readInitialLink(_orphaned.add);
+    await _readInitialLink(_startupLinks.add);
 
     _primed = true;
   }
@@ -108,9 +109,13 @@ class ReturnLinkWatcher {
   void _arrived(Uri uri) {
     final url = uri.toString();
 
-    if (!_primed || _watching.isEmpty || _orphaned.contains(url)) {
-      _orphaned.add(url);
+    if (!_primed) {
+      _startupLinks.add(url);
 
+      return;
+    }
+
+    if (_watching.isEmpty || _startupLinks.contains(url)) {
       return;
     }
 

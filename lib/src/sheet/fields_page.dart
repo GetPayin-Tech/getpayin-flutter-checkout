@@ -3,6 +3,12 @@ import 'dart:convert';
 /// The channel the fields page posts its events on.
 const String fieldsChannelName = 'PayLinkFields';
 
+/// The fragment the wallet page sets on its own address once its charge is out.
+///
+/// The wallet surface has no channel, because WebKit turns Apple Pay off on a page the host
+/// has scripted, so its address is the one thing the page can change and the host can see.
+const String walletChargingFragment = 'paylink-charging';
+
 /// Builds the page that hosts PayLink's card fields.
 ///
 /// **You host this file yourself**, on the origin registered on your integration, over
@@ -19,10 +25,23 @@ const String fieldsChannelName = 'PayLinkFields';
 /// Everything it does, it does through PayLink: the SDK comes from [sdkUrl], the capture
 /// context, payer authentication and the charge are PayLink's endpoints, and the card
 /// iframes are the gateway's own. Nothing here talks to a gateway directly.
-String buildFieldsPageHtml(
-    {required String sdkUrl, String channel = fieldsChannelName}) {
+///
+/// The wallet button reads its configuration from the page's own link, and anyone can send
+/// a payer a link to your page. So the page loads an SDK that link names only when it is
+/// [sdkUrl] or one of [otherSdkUrls], compared by address and path: list every other PayLink
+/// whose wallet payments this page takes. The card form is told its SDK by the sheet itself,
+/// which no link can reach.
+String buildFieldsPageHtml({
+  required String sdkUrl,
+  List<String> otherSdkUrls = const <String>[],
+  String channel = fieldsChannelName,
+}) {
   final script = jsonEncode(sdkUrl);
+  final known = jsonEncode(
+    <String>[sdkUrl, ...otherSdkUrls].map(_addressAndPath).toList(),
+  );
   final channelName = jsonEncode(channel);
+  final charging = jsonEncode(walletChargingFragment);
 
   return '''
 <!doctype html>
@@ -43,9 +62,10 @@ String buildFieldsPageHtml(
   #box { border: 1px solid var(--border, #e6e6e6); border-radius: 8px; overflow: hidden; background: #fff; }
   #box.invalid { border-color: var(--danger, #df1b41); }
   .row { display: flex; }
+  .row[hidden] { display: none; }
   .cell { position: relative; flex: 1; height: var(--rowHeight, 56px); padding: 0 12px; display: flex; align-items: center; }
   .cell + .cell { border-left: 1px solid var(--border, #e6e6e6); }
-  .row + .row { border-top: 1px solid var(--border, #e6e6e6); }
+  .row:not([hidden]) ~ .row { border-top: 1px solid var(--border, #e6e6e6); }
   .cell > div, .cell > input { width: 100%; height: 100%; }
   input {
     border: 0; outline: 0; background: transparent; font: inherit; color: inherit;
@@ -117,9 +137,18 @@ String buildFieldsPageHtml(
 (function () {
   var CHANNEL = $channelName;
   var DEFAULT_SDK = $script;
+  var KNOWN_SDKS = $known;
+  var CHARGING = $charging;
   var fields = null;
   var started = false;
   var loading = null;
+
+  /*
+   * The code the host sent with its last charge. A failure carries it back: the channel is
+   * open to every frame on this page, and only this page was handed the code, so the host
+   * takes a failure during a charge only when it has it.
+   */
+  var attempt = null;
 
   function post(message) {
     var channel = window[CHANNEL];
@@ -130,11 +159,15 @@ String buildFieldsPageHtml(
   }
 
   function fail(error) {
-    post({
+    var failure = {
       type: 'error',
       code: (error && error.code) || 'unknown',
       message: (error && error.message) || 'The card could not be taken.'
-    });
+    };
+
+    if (attempt) { failure.attempt = attempt; }
+
+    post(failure);
   }
 
   /**
@@ -165,6 +198,22 @@ String buildFieldsPageHtml(
     });
 
     return loading;
+  }
+
+  /**
+   * The SDK address a link names, when it is one this page was made for, or null.
+   *
+   * Anyone can send a payer a link to this page, and a script loaded from it runs as your
+   * site. Compared by origin and path, so a query the PayLink adds does not matter.
+   */
+  function knownSdk(url) {
+    try {
+      var parsed = new URL(url, window.location.href);
+
+      return KNOWN_SDKS.indexOf(parsed.origin + parsed.pathname) === -1 ? null : parsed.href;
+    } catch (error) {
+      return null;
+    }
   }
 
   function applyStyle(style) {
@@ -293,12 +342,17 @@ String buildFieldsPageHtml(
    * A wallet payer never calls pay(), so the outcome arrives as an event. With no channel to
    * answer on, the page does what a browser would: it goes to the return link, which the
    * host reads off the navigation.
+   *
+   * The charge runs for a few seconds after the wallet's own sheet has closed, so the page
+   * says when it is out the same way, on its own address, and the host holds still until
+   * the answer.
    */
   function relayWalletOutcome(instance) {
     function go(result) {
       if (result && result.returnUrl) { window.location.href = result.returnUrl; }
     }
 
+    instance.on('charging', function () { window.location.hash = CHARGING; });
     instance.on('success', go);
     instance.on('declined', go);
   }
@@ -370,6 +424,8 @@ String buildFieldsPageHtml(
       var asked = options || {};
       var parts = expiry();
 
+      attempt = asked.attempt;
+
       if (asked.billing) { parts.billing = asked.billing; }
       if (asked.tokenize) { parts.tokenize = true; }
 
@@ -381,7 +437,8 @@ String buildFieldsPageHtml(
           reasonCode: result.reasonCode,
           invoiceId: result.invoiceId,
           paidStatus: result.paidStatus,
-          returnUrl: result.returnUrl
+          returnUrl: result.returnUrl,
+          attempt: asked.attempt
         });
       }).catch(fail);
     },
@@ -398,12 +455,13 @@ String buildFieldsPageHtml(
   function startFromFragment() {
     var hash = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
     var token = hash.get('t');
+    var sdkUrl = hash.has('s') ? knownSdk(hash.get('s')) : DEFAULT_SDK;
 
-    if (!token) { return; }
+    if (!token || !sdkUrl) { return; }
 
     start({
       clientToken: token,
-      sdkUrl: hash.get('s') || DEFAULT_SDK,
+      sdkUrl: sdkUrl,
       wallets: (hash.get('w') || '').split(',').filter(Boolean),
       style: {}
     }, true);
@@ -415,6 +473,21 @@ String buildFieldsPageHtml(
 </body>
 </html>
 ''';
+}
+
+/// [url] as the page compares it: its origin and path, without the query.
+///
+/// The same reading the browser gives `origin + pathname`, so a PayLink that adds a query to
+/// its SDK address still matches. Text with no web origin, such as the placeholder in the
+/// committed copy of the page, is written in as it stands.
+String _addressAndPath(String url) {
+  final uri = Uri.tryParse(url);
+
+  if (uri == null || !uri.hasAuthority || !uri.isScheme('https')) {
+    return url;
+  }
+
+  return '${uri.origin}${uri.path}';
 }
 
 /// The URL the wallet surface is loaded with.

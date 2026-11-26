@@ -148,6 +148,20 @@ void main() {
       expect(result.status, CardSaveStatus.notSaved);
       expect(result.code, CheckoutResultCode.unreadableReturnLink);
     });
+
+    test('carries a checkout nobody can confirm through as unconfirmed', () {
+      final result = cardSaveFromCheckout(
+        const CheckoutResult(
+          status: CheckoutStatus.notPaid,
+          code: CheckoutResultCode.outcomeUnknown,
+          message: 'closed',
+        ),
+      );
+
+      expect(result.status, CardSaveStatus.notSaved);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+      expect(result.message, 'closed');
+    });
   });
 
   group('invoiceIdInCheckoutUrl', () {

@@ -83,6 +83,79 @@ void main() {
       expect(shown, isEmpty);
     });
 
+    /*
+     * Once nobody can confirm how the checkout ended, it cannot go as cancelled, whoever
+     * takes it away: the payer's close, the app's own code, or the provider going.
+     */
+    group('once a checkout is unconfirmed', () {
+      const unconfirmed = CheckoutResult(
+        status: CheckoutStatus.notPaid,
+        code: CheckoutResultCode.outcomeUnknown,
+        message: 'the page failed',
+      );
+
+      test('settles a close as unconfirmed', () async {
+        final host = CheckoutSessionHost((_) {});
+        final pending = host.present(testRequest());
+
+        host
+          ..holdUnconfirmed(unconfirmed)
+          ..cancel();
+
+        expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+      });
+
+      test('settles the provider going away as unconfirmed', () async {
+        final host = CheckoutSessionHost((_) {});
+        final pending = host.present(testRequest());
+
+        host
+          ..holdUnconfirmed(unconfirmed)
+          ..dispose();
+
+        final result = await pending;
+
+        expect(result.code, CheckoutResultCode.outcomeUnknown);
+        expect(result.message, 'the page failed');
+      });
+
+      test('still takes an answer that comes after', () async {
+        final host = CheckoutSessionHost((_) {});
+        final pending = host.present(testRequest());
+
+        host
+          ..holdUnconfirmed(unconfirmed)
+          ..finish(const CheckoutResult(status: CheckoutStatus.paid));
+
+        expect((await pending).status, CheckoutStatus.paid);
+      });
+
+      test('does not carry over to the next checkout', () async {
+        final host = CheckoutSessionHost((_) {});
+        final first = host.present(testRequest());
+
+        host
+          ..holdUnconfirmed(unconfirmed)
+          ..cancel();
+        await first;
+
+        final second = host.present(testRequest());
+
+        host.cancel();
+
+        expect((await second).status, CheckoutStatus.cancelled);
+      });
+
+      test('is ignored when nothing is open', () async {
+        final host = CheckoutSessionHost((_) {})..holdUnconfirmed(unconfirmed);
+        final pending = host.present(testRequest());
+
+        host.cancel();
+
+        expect((await pending).status, CheckoutStatus.cancelled);
+      });
+    });
+
     test('presents a second checkout after the first ended', () async {
       final host = CheckoutSessionHost((_) {});
       final first = host.present(testRequest());

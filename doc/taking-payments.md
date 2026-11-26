@@ -59,16 +59,20 @@ answers HTTP 403.
 
 **A cancelled checkout can still have been paid.** It is what the package reports whenever
 no trustworthy answer arrived, and a payment can go through with no answer arriving: the
-payer paid and then closed the screen, the page died after the charge, the return link came
-in after the grace period, or the provider was taken off the tree mid-checkout. Before you
-create a second payment for the same order, read the old invoice on your server — its
-`invoice.paid` webhook is the authority, and it will have fired.
+payer paid and then closed the screen, the page died after the charge in the browser sheet,
+the return link came in after the grace period, or the provider was taken off the tree
+mid-checkout. Before you create a second payment for the same order, read the old invoice
+on your server — its `invoice.paid` webhook is the authority, and it will have fired. In the
+app's own screen, a page that fails after the checkout has loaded is closed as `notPaid`
+with `CheckoutResultCode.outcomeUnknown` instead, for the same reason, and so is a checkout
+your app takes away after that.
 
 Leaving the cart as it was is safe. Creating a second payment is what is not: that is a
 new invoice, and nothing on PayLink's side can tell it is the same order. Reopening the
 **same** `checkout_url` is safe either way — a paid invoice is never charged twice; the
-hosted checkout answers that it is already complete, and the payment sheet refuses it with
-`already_paid`. A hosted checkout the payer abandons and comes back from reports `notPaid`.
+hosted checkout answers that it is already complete, and the payment sheet settles it with
+`CheckoutResultCode.outcomeUnknown`, which tells you to read the invoice. A hosted checkout
+the payer abandons and comes back from reports `notPaid`.
 
 `invoiceId` is present when the return link carried one. `invoiceStatus` is the invoice
 state the link reported (`PAID`, `UNPAID`, `PARTIALLY_PAID`, `AUTHORIZED`), and only `PAID`
@@ -86,12 +90,17 @@ none. It is the stable value to branch on and to look a message of your own up b
 | `null`                                        | The checkout declined or failed the payment.            | Show `message`. Offer a retry.                                       |
 | `CheckoutResultCode.unreadableReturnLink`     | The link's own fields could not be read.                | Check the invoice on your server. Alert on this one; it is a bug.    |
 | `CheckoutResultCode.wrongInvoice`             | The link named another invoice.                         | Check the invoice on your server. Do not retry blindly.              |
-| `CheckoutResultCode.unexpectedInvoiceStatus`  | `success=1` with an `invoice_status` other than `PAID`. | Check the invoice on your server. An authorised invoice is not paid. |
-| `CheckoutResultCode.outcomeUnknown`           | A charge went out and its answer never came back.       | Check the invoice on your server. Never charge again on this one.    |
+| `CheckoutResultCode.unexpectedInvoiceStatus`  | A paid claim whose invoice status is not `PAID`.        | Check the invoice on your server. An authorised invoice is not paid. |
+| `CheckoutResultCode.outcomeUnknown`           | No answer came back, or the invoice was already paid.   | Check the invoice on your server. Never charge again on this one.    |
 | `CheckoutResultCode.checkoutUnavailable`      | The payment sheet could not be shown at all.            | Nothing was charged. Open the hosted checkout, or show `message`.    |
 
 The payer may well have paid on every one of those but the last, so none of them is a
 reason to ask for payment again before the invoice has been checked on your server.
+
+If your company authorises cards and captures them later, a checkout that went through ends
+with `unexpectedInvoiceStatus` and `invoiceStatus` `AUTHORIZED`: the card is authorised, not
+charged yet. Wait for the `invoice.authorized` webhook for those payments, not
+`invoice.paid`.
 
 ## Confirming it
 
@@ -103,6 +112,18 @@ other app on the phone can open your app with
 Confirm with the `invoice.paid` webhook on your server before you deliver. Deliver only
 when the verified webhook also says `success` and `PAID`, and the invoice is one you
 created.
+
+Verified means its `signature` checks out: recompute it on your server with your hash token
+and compare the two in constant time, before you act on anything else in the webhook.
+PayLink's integration guide, served at `/docs/payment_integration/` on your PayLink host,
+says which fields the signature covers for each event. The example app's test server does
+not check webhooks: it is for trying the package, never for production.
+
+If your app is closed while a checkout is open, by the payer or by the phone, the return
+link starts it again and the package drops that link on purpose: no checkout is waiting for
+it any more, and taking it would hand one checkout's answer to the next. So when your app
+starts, ask your server about any payment it opened that never got a result, and show the
+payer what the invoice says.
 
 See [the security model](security.md) for what the package does on its side.
 
@@ -136,9 +157,10 @@ refused with `GetPayInConfigError` rather than quietly turning the check off.
 
 ## Retrying
 
-After a `notPaid`, create a **new** payment on your server and open the new
-`checkoutUrl`. Do not reopen the old one: a checkout link is for one attempt, and its
-invoice is already in a terminal state.
+After a decline, the old checkout link can still be paid until it expires. For a retry,
+open the same `checkoutUrl` again. Create a **new** payment only after you have checked the
+old invoice on your server: a new payment is a new invoice, and nothing on PayLink's side
+can tell it is the same order.
 
 ## Saving the card for next time
 

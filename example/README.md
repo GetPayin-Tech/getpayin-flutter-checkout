@@ -55,12 +55,20 @@ GETPAYIN_HASH_TOKEN=your-hash-token
 ENV
 chmod 600 ~/.config/getpayin/dev.env
 
-python3 example/tool/dev_server.py      # prints the address to put in the app
+python3 example/tool/dev_server.py      # prints its address and its key
 cd example && flutter run
 ```
 
 Keep that file out of the repository. If a hash token ever reaches a bundle, a page or a
 log, rotate it.
+
+The server signs with those credentials and takes none from the phone, so no token is ever
+typed into the app. Every call the app makes carries the key the server prints as it
+starts: type it under the gear, or build it in with `--dart-define=DEV_SERVER_KEY=...`. Add
+`GETPAYIN_DEV_SERVER_KEY=...` to `dev.env` to keep one key across restarts.
+
+It listens on this computer only, which is all a tunnel on the same machine needs. For a
+phone on the same network, start it with `HOST=0.0.0.0`, and only on a network you trust.
 
 ## Putting it on a phone
 
@@ -73,8 +81,8 @@ gh workflow run apk.yml \
   -f fields_page=https://your-origin.example.com/paylink-fields.html
 ```
 
-`payments_server` is `tool/dev_server.py` as the **phone** reaches it, so a LAN address,
-not `localhost`. `fields_page` is only for the payment sheet, and only works from the
+`payments_server` is `tool/dev_server.py` as the **phone** reaches it, so a LAN address
+(with the server started as `HOST=0.0.0.0`) or the tunnel, not `localhost`. `fields_page` is only for the payment sheet, and only works from the
 origin registered for the integration. Leave either out and the field starts empty or on
 its default, and you type it on the phone.
 
@@ -97,7 +105,7 @@ payment will work and the app will never hear about it.
 Tick **Save my card for future payments** and the card is vaulted off the same
 authorization. The token itself never reaches the app: PayLink sends it to the integration's
 **Webhook URL** as `card_token.created`, so point that at this server — any path will do,
-it treats everything that is not `/init` or `/charge` as the webhook — and it keeps what
+it treats every POST that is not `/init`, `/charge` or `/revoke` as the webhook — and it keeps what
 arrives in `~/.config/getpayin/dev-cards.json`.
 
 The next payment then offers that card on the sheet. Picking it calls `/charge` here, which

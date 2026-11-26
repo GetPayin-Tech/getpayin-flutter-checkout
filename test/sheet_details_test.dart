@@ -415,8 +415,12 @@ void main() {
       expect(page.scripts.join(), contains('destroy'));
     });
 
-    testWidgets(
-        'shows the issuer challenge even when the payer went back first', (
+    /*
+     * A payer cannot go back to the methods mid-charge: that screen holds the saved card and
+     * the wallet, a second payment one tap away. So the challenge always arrives on the card
+     * screen, and takes the whole of it.
+     */
+    testWidgets('shows the issuer challenge, with no way back to the methods', (
       tester,
     ) async {
       await open(tester, configuration());
@@ -426,8 +430,8 @@ void main() {
       await completeTheCard(tester);
       await tester.tap(find.text(r'Pay $97.42'));
       await pumpFrames(tester);
-      await tester.tap(find.byTooltip(const PaymentSheetStrings().back));
-      await pumpFrames(tester);
+
+      expect(find.byTooltip(const PaymentSheetStrings().back), findsNothing);
 
       postToCard(<String, Object?>{
         'type': 'authenticating',

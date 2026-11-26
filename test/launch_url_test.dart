@@ -121,6 +121,34 @@ void main() {
       secondWatch.stop();
     });
 
+    /*
+     * The plugin can hand the launch link over twice, by both of its paths, which is why
+     * the watcher remembers the links it saw while starting. A link that arrived later with
+     * nobody waiting was dropped, and that is the whole of it: it is not held against a
+     * checkout it reaches afterwards, and the app's own links are not kept for the life of
+     * the process.
+     */
+    test('is not held against a checkout it reaches later', () async {
+      final watcher = ReturnLinkWatcher(source: links.source);
+      final late = returnLink('success=1&invoice_id=INV-LATE');
+
+      await watcher.prime();
+      await flush();
+
+      links.emit(late);
+      await flush();
+
+      final matched = <String>[];
+      final watching = watcher.watch(testReturnUrl, matched.add);
+
+      await flush();
+      links.emit(late);
+      await flush();
+
+      expect(matched, <String>[late]);
+      watching.stop();
+    });
+
     test('is dropped when it arrives between two checkouts', () async {
       final watcher = ReturnLinkWatcher(source: links.source);
 

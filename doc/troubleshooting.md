@@ -151,13 +151,14 @@ checkout was opened for. Either something forged the link, or your code passed t
 
 The package opens the bank's link directly, with no scheme to declare. If nothing opens, the
 bank's app is most likely not installed on that phone. The payer is shown
-`linkErrorMessage` and the top bar appears so they can close the checkout; they can finish
-the step on the bank's web page if it offers one.
+`linkErrorMessage` over the checkout, and the top bar appears so they can close it. The
+payer may have answered the bank by then, so closing settles `notPaid` with
+`CheckoutResultCode.outcomeUnknown`: confirm the invoice on your server.
 
-On Android, some bank pages use `intent://` links. `url_launcher` hands those to the system
-as an ordinary view intent rather than parsing them the way Chrome does, so a step that
-works in the browser sheet may do nothing in your app's own screen. If you hit one, please
-report it with the bank's name.
+On Android, some bank pages use `intent://` links, which no app answers to as written. The
+package reads them the way Chrome does: it opens the app the link names, under the same
+rules as any other link, and when no app takes it, loads the link's own web page
+(`browser_fallback_url`) in the checkout. Only a link with neither shows `linkErrorMessage`.
 
 The package deliberately refuses some links rather than handing them to the phone:
 

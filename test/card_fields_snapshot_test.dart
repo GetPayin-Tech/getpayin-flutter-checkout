@@ -195,6 +195,67 @@ void main() {
   });
 
   /*
+   * Whether the gateway may have the money decides what a failure is allowed to mean. PayLink's
+   * SDK asks the issuer before it charges, so everything up to the charge itself is a step the
+   * payer can retry; from the charge to its answer, nothing can be reported as nothing.
+   */
+  group('whether a charge is out', () {
+    test('is not set while the issuer is being asked', () {
+      final setup = applyFieldsEvent(
+        const CardFieldsSnapshot(ready: true),
+        const FieldsAuthenticating(),
+      );
+      final challenge = applyFieldsEvent(
+        setup,
+        const FieldsAuthenticating(stage: 'challenge'),
+      );
+
+      expect(setup.chargeStarted, isFalse);
+      expect(challenge.chargeStarted, isFalse);
+    });
+
+    test('is set once the charge itself is sent', () {
+      final charging = applyFieldsEvent(
+        const CardFieldsSnapshot(ready: true),
+        const FieldsCharging(),
+      );
+
+      expect(charging.chargeStarted, isTrue);
+    });
+
+    test('is cleared by the answer, whichever way it went', () {
+      final charging = applyFieldsEvent(
+        const CardFieldsSnapshot(ready: true),
+        const FieldsCharging(),
+      );
+
+      expect(
+        applyFieldsEvent(charging, const FieldsPayment(success: false))
+            .chargeStarted,
+        isFalse,
+        reason: 'a decline is an answer: nothing is left in flight',
+      );
+      expect(
+        applyFieldsEvent(charging, const FieldsPayment(success: true))
+            .chargeStarted,
+        isFalse,
+      );
+    });
+
+    test('stays set through a failure that came after the charge', () {
+      final failed = applyFieldsEvent(
+        applyFieldsEvent(
+          const CardFieldsSnapshot(ready: true),
+          const FieldsCharging(),
+        ),
+        const FieldsError(failure: FieldsFailure.unknown),
+      );
+
+      expect(failed.chargeStarted, isTrue);
+    });
+  });
+
+  /*
    * The name is typed into the card box, because a box whose rows are drawn by two engines
    * cannot be kept aligned, but what counts as a name is decided here: the charge wants two
    * of them and ignores the whole address without both.
@@ -213,6 +274,33 @@ void main() {
       );
 
       expect(snapshot.cardholderName, 'Ada Lovelace');
+    });
+
+    /*
+     * The page sends a cleared field as empty text, and the reader keeps no empty text. A
+     * name the payer deleted would then still be billed, and still count as filled in.
+     */
+    test('is forgotten once the payer clears it', () {
+      final named = applyFieldsEvent(
+        const CardFieldsSnapshot(ready: true),
+        const FieldsChanged(
+          field: 'name',
+          valid: false,
+          empty: false,
+          couldBeValid: true,
+          value: 'Ada Lovelace',
+        ),
+      );
+      final cleared = applyFieldsEvent(
+        named,
+        parseFieldsEvent(
+          '{"type":"change","field":"name","empty":true,"value":"",'
+          '"couldBeValid":true}',
+        )!,
+      );
+
+      expect(cleared.cardholderName, isEmpty);
+      expect(cleared.valid, isNot(contains('name')));
     });
 
     test('counts as filled in only once it is two names', () {
