@@ -117,6 +117,11 @@ wrong. That is the part a reviewer cannot work out from the diff.
 
 ## Releasing
 
-1. Update `CHANGELOG.md`.
+1. Update `CHANGELOG.md`. If `doc/paylink-fields.html` changed, say so in the entry: hosts
+   must make a new copy with `tool/write_fields_page.dart` and upload it. The sheet expects the
+   page from its own release, and an older copy can send the payer to the hosted checkout with
+   `page_outdated`.
 2. Bump the version in `pubspec.yaml`.
-3. Tag `vX.Y.Z`, then `dart pub publish`.
+3. On that commit, run the five commands under "Getting set up", then
+   `flutter pub publish --dry-run`. Release only when all of them pass.
+4. Tag `vX.Y.Z`, then `dart pub publish`.
