@@ -351,6 +351,12 @@ def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
         charge["authentication_return_url"] = f"{public_base}/3ds/{reference}/return"
         charge["authentication_reference_id"] = setup["data"]["reference_id"]
 
+        # A harness exists to exercise the step-up, so it asks for one. Without this the
+        # enrollment states no preference, CyberSource defaults to "01", and the issuer
+        # takes the cheap answer: a frictionless pass, and a challenge nobody can try. The
+        # issuer may still refuse to challenge -- this is a request, not a switch.
+        charge["authentication_challenge"] = "mandate"
+
     status, answer = call_tokens("tokens/charge", charge, config)
 
     # PayLink records the payment after the gateway has charged, so a server error can
