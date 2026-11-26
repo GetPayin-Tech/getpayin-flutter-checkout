@@ -31,8 +31,21 @@ const int _interruptedByPolicy = 102;
 /// page the payer is on is what counts, and only an error carrying that same URL is the
 /// page refusing to load — which is what a double-decoded `checkout_url` looks like: HTTP
 /// 403 on the document itself.
-bool isPageHttpFailure({String? failedUri, String? pageUri}) {
-  if (failedUri == null || pageUri == null) {
+///
+/// iOS names no address on an HTTP error, and reports one only for a document the web view
+/// loads, never for a script or a data request. So an error with no address that arrives
+/// [beforeFirstPage] has finished is that page answering, and one after it is not taken as
+/// the page: a frame's document could be the one that failed.
+bool isPageHttpFailure({
+  String? failedUri,
+  String? pageUri,
+  bool beforeFirstPage = false,
+}) {
+  if (failedUri == null) {
+    return beforeFirstPage;
+  }
+
+  if (pageUri == null) {
     return false;
   }
 

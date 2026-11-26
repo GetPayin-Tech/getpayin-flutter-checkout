@@ -49,11 +49,25 @@ enum FieldsFailure {
   /// The card field library could not load: a content blocker, or a CSP that forbids it.
   libraryUnavailable('library_unavailable', fatal: true),
 
+  /// The card fields page you host is older than this package.
+  ///
+  /// Not one of PayLink's codes: the box reports it when the page's first message carries
+  /// no key, because such a page would charge the card and then post an answer the box has
+  /// to refuse. It is caught before the payer can pay. Host the `doc/paylink-fields.html`
+  /// of the release you depend on.
+  pageOutdated('page_outdated', fatal: true),
+
   /// Card payments for this merchant are temporarily refused by failed-payment velocity.
   paymentsPaused('payments_paused', fatal: true),
 
   /// The card the payer entered is not usable.
   cardInvalid('card_invalid'),
+
+  /// The payment keeps the card, and the payer has not ticked the box that agrees to it.
+  ///
+  /// The SDK checks its own tick when Pay is pressed, so a payer who unticks it a moment
+  /// before is asked to tick it again on the same form.
+  consentRequired('consent_required'),
 
   /// The expiry the payer entered is not usable.
   expiryInvalid('expiry_invalid'),

@@ -36,7 +36,8 @@ class CardFieldsSnapshot {
   /// True once the charge is running and can no longer be called off.
   final bool charging;
 
-  /// What will actually be charged, in minor units, once the gateway has said.
+  /// What will actually be charged, in hundredths whatever the currency, once the gateway
+  /// has said.
   final int? amountMinor;
 
   /// The currency it will be charged in, once the gateway has said.

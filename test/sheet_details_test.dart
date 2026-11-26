@@ -66,6 +66,29 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('ignores its page loading again once it is disposed',
+        (tester) async {
+      final controller = build()..webView;
+
+      await tester.pump();
+
+      final page = webView.controllers.first;
+
+      page.post(jsonEncode(<String, Object?>{
+        'type': 'ready',
+        'amountMinor': 9742,
+        'currency': 'USD',
+      }));
+      controller.dispose();
+      page.navigation?.onPageStarted?.call(testFieldsPageUrl);
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'a web view can report a load after the sheet has closed',
+      );
+    });
+
     testWidgets('clears a stale message as the payer corrects the card',
         (tester) async {
       final controller = build()..webView;

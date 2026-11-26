@@ -26,7 +26,8 @@ enum CheckoutStatus {
 /// [unreadableReturnLink] means the link's own fields could not be read: a genuine decline
 /// carries no code at all, so the two are told apart by this rather than by text. It is the
 /// one to alert on — it means the backend and this reader disagree about the shape of the
-/// link. [wrongInvoice] means the link named another invoice. [unexpectedInvoiceStatus]
+/// link. [wrongInvoice] means a paid claim named another invoice; a checkout passes over
+/// such a link rather than end with it. [unexpectedInvoiceStatus]
 /// means a claim of payment named an invoice that is not paid in full, which can be one a
 /// card was charged on. The payer may well have paid in all three cases, so none is a
 /// reason to ask for payment again before the invoice has been checked on your server.

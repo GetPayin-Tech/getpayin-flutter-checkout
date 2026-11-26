@@ -53,6 +53,7 @@ void main() {
     bool fallBackToHostedCheckout = true,
     bool collectBillingAddress = false,
     void Function(FieldsError error)? onHandover,
+    void Function(String note)? onDiagnostic,
     Duration successPause = Duration.zero,
     String origin = testOrigin,
     Object? expectedInvoiceId = 90210,
@@ -60,6 +61,7 @@ void main() {
     return PaymentSheetConfiguration(
       collectBillingAddress: collectBillingAddress,
       onHandover: onHandover,
+      onDiagnostic: onDiagnostic,
       successPause: successPause,
       session: testFieldsSession(origin: origin),
       fieldsPageUrl: testFieldsPageUrl,
@@ -365,6 +367,143 @@ void main() {
     expect(result.code, CheckoutResultCode.wrongInvoice);
   });
 
+  testWidgets('takes a payment when the session names no readable invoice',
+      (tester) async {
+    final pending = await openSheet(
+      tester,
+      PaymentSheetConfiguration(
+        session:
+            PayLinkFieldsSession.fromInit(testInitResponse(invoiceId: ''))!,
+        fieldsPageUrl: testFieldsPageUrl,
+        returnUrl: testReturnUrl,
+        amountLabel: r'$97.42',
+        successPause: Duration.zero,
+      ),
+    );
+
+    CheckoutResult? settled;
+
+    unawaited(pending.then((result) => settled = result));
+
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+    await completeTheCard(tester);
+    await tester.tap(find.text(r'Pay $97.42'));
+    await pumpFrames(tester);
+    answerTheCharge(<String, Object?>{
+      'success': true,
+      'invoiceId': 90210,
+      'paidStatus': 'PAID',
+    });
+    await pumpFrames(tester);
+
+    expect(
+      settled?.status,
+      CheckoutStatus.paid,
+      reason: 'an id nobody can read binds the payment to no invoice at all',
+    );
+  });
+
+  testWidgets('refuses an expected invoice that is not one before it opens',
+      (tester) async {
+    Object? refused;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => GetPayInPaymentSheet.show(
+              context,
+              configuration(expectedInvoiceId: ''),
+            ).then((_) {}, onError: (Object error) {
+              refused = error;
+            }),
+            child: const Text('checkout'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('checkout'));
+    await pumpFrames(tester);
+
+    expect(refused, isA<GetPayInConfigError>());
+    expect(find.byType(GetPayInPaymentSheet), findsNothing);
+    expect(checkoutGuard.busy, isFalse);
+  });
+
+  testWidgets('refuses a return link that is not one before it opens',
+      (tester) async {
+    Object? refused;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => GetPayInPaymentSheet.show(
+              context,
+              PaymentSheetConfiguration(
+                session: testFieldsSession(),
+                fieldsPageUrl: testFieldsPageUrl,
+                returnUrl: 'not a link',
+              ),
+            ).then((_) {}, onError: (Object error) {
+              refused = error;
+            }),
+            child: const Text('checkout'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('checkout'));
+    await pumpFrames(tester);
+
+    expect(
+      refused,
+      isA<GetPayInConfigError>(),
+      reason: 'a wallet answer would never match it, and the fallback throws',
+    );
+    expect(find.byType(GetPayInPaymentSheet), findsNothing);
+  });
+
+  testWidgets(
+      'refuses a session whose checkout link is not one before it opens',
+      (tester) async {
+    final init = testInitResponse();
+
+    (init['data']! as Map<String, Object?>)['checkout_url'] =
+        'myapp://not-a-checkout';
+
+    Object? refused;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => GetPayInPaymentSheet.show(
+              context,
+              PaymentSheetConfiguration(
+                session: PayLinkFieldsSession.fromInit(init)!,
+                fieldsPageUrl: testFieldsPageUrl,
+                returnUrl: testReturnUrl,
+              ),
+            ).then((_) {}, onError: (Object error) {
+              refused = error;
+            }),
+            child: const Text('checkout'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('checkout'));
+    await pumpFrames(tester);
+
+    expect(
+      refused,
+      isA<GetPayInConfigError>(),
+      reason: 'the hosted fallback would throw after the sheet had closed',
+    );
+  });
+
   /*
    * A token in the page's URL reaches the host's access log, the web view's history and any
    * Referer the page sends. It is handed over the channel instead.
@@ -395,6 +534,22 @@ void main() {
     expect(walletSurface().loaded.single.fragment, contains('t='));
   });
 
+  testWidgets('takes the wallet away when its page says it cannot be shown',
+      (tester) async {
+    final notes = <String>[];
+
+    await openSheet(tester, configuration(onDiagnostic: notes.add));
+    walletSurface().changeUrl('$testFieldsPageUrl#paylink-wallet-unavailable');
+    await pumpFrames(tester);
+
+    expect(
+      find.byType(WalletSurface),
+      findsNothing,
+      reason: 'an empty row where a wallet should be helps nobody',
+    );
+    expect(notes, contains(startsWith('wallet unavailable')));
+  });
+
   testWidgets('keeps the sheet open on a decline, with the reason',
       (tester) async {
     await openSheet(tester, configuration());
@@ -414,6 +569,49 @@ void main() {
 
     expect(find.text('Card declined'), findsOneWidget);
     expect(find.text(const PaymentSheetStrings().addNewCard), findsOneWidget);
+  });
+
+  testWidgets('clears a wallet decline once the next wallet charge is out',
+      (tester) async {
+    declareHostAppSchemes(const <String>['myapp']);
+
+    await openSheet(tester, configuration());
+    await walletSurface().navigate(
+      returnLink('success=0&invoice_id=90210&message=Declined'),
+    );
+    await pumpFrames(tester);
+
+    expect(find.text('Declined'), findsOneWidget);
+
+    walletSurface().changeUrl('$testFieldsPageUrl#paylink-charging');
+    await pumpFrames(tester);
+
+    expect(find.text('Declined'), findsNothing);
+  });
+
+  testWidgets('clears the reason for a decline once the payer pays again',
+      (tester) async {
+    await openSheet(tester, configuration());
+
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+    await completeTheCard(tester);
+    await tester.tap(find.text(r'Pay $97.42'));
+    await pumpFrames(tester);
+    answerTheCharge(<String, Object?>{
+      'success': false,
+      'invoiceId': 90210,
+      'message': 'Card declined',
+    });
+    await pumpFrames(tester);
+    await tester.tap(find.text(r'Pay $97.42'));
+    await pumpFrames(tester);
+
+    expect(
+      find.text('Card declined'),
+      findsNothing,
+      reason: 'left up during the next charge, it reads as that one failing',
+    );
   });
 
   testWidgets('sends a payment the fields cannot take to the hosted checkout', (
@@ -497,6 +695,84 @@ void main() {
   });
 
   /*
+   * The wallet row's page is one the sheet takes a return link from, so it may hold only
+   * the shop's own page and PayLink's, where a "Mobile App" integration's return link
+   * forwards the payer from. Frames inside it are the wallet's own and load anything.
+   */
+  group('the wallet page', () {
+    testWidgets('may not go to another website', (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface()..finishLoading();
+
+      expect(
+        await wallet.navigate('https://elsewhere.example/pay'),
+        NavigationDecision.prevent,
+      );
+      await pumpFrames(tester);
+
+      expect(find.byType(WalletSurface), findsOneWidget,
+          reason: 'its own page is still up');
+    });
+
+    for (final page in <String>[
+      'data:text/html,<p>paid</p>',
+      'blob:https://elsewhere.example/0b7c',
+      'about:srcdoc',
+      'file:///sdcard/page.html',
+    ]) {
+      testWidgets('may not be replaced by ${page.split(':').first}: page',
+          (tester) async {
+        await openSheet(tester, configuration());
+
+        final wallet = walletSurface()..finishLoading();
+
+        expect(await wallet.navigate(page), NavigationDecision.prevent);
+      });
+    }
+
+    testWidgets("may go to PayLink's page that forwards to the app",
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface()..finishLoading();
+
+      expect(
+        await wallet.navigate(
+          'https://pay.getpayin.com/integration/app-return?success=1&invoice_id=90210',
+        ),
+        NavigationDecision.navigate,
+      );
+    });
+
+    testWidgets('still loads anything inside a frame', (tester) async {
+      await openSheet(tester, configuration());
+
+      expect(
+        await walletSurface().navigate(
+          'https://pay.google.com/gp/p/ui/pay',
+          isMainFrame: false,
+        ),
+        NavigationDecision.navigate,
+      );
+    });
+
+    testWidgets('sent elsewhere before it has loaded is taken away',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      expect(
+        await walletSurface().navigate('https://elsewhere.example/'),
+        NavigationDecision.prevent,
+      );
+      await pumpFrames(tester);
+
+      expect(find.byType(WalletSurface), findsNothing,
+          reason: 'a page that never loads leaves an empty row');
+    });
+  });
+
+  /*
    * The challenge is framed by the SDK inside the box and has to stay framed that way, so
    * the sheet gives it the screen rather than drawing its own chrome over it.
    */
@@ -529,6 +805,71 @@ void main() {
       box.height,
       greaterThan(screen.height * 0.8),
       reason: 'a challenge drawn in a short box scrolls the field out of it',
+    );
+  });
+
+  testWidgets('keeps the whole challenge above the keyboard on a notched phone',
+      (tester) async {
+    tester.view
+      ..devicePixelRatio = 3
+      ..physicalSize = const Size(390 * 3, 844 * 3)
+      ..padding = const FakeViewPadding(top: 47 * 3, bottom: 34 * 3)
+      ..viewPadding = const FakeViewPadding(top: 47 * 3, bottom: 34 * 3);
+    addTearDown(tester.view.reset);
+
+    await openSheet(tester, configuration());
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+    postToCard(<String, Object?>{
+      'type': 'authenticating',
+      'stage': 'challenge',
+    });
+    await pumpFrames(tester);
+
+    tester.view
+      ..viewInsets = const FakeViewPadding(bottom: 336 * 3)
+      ..padding = const FakeViewPadding(top: 47 * 3);
+    await pumpFrames(tester);
+
+    final box = tester.getRect(find.byType(CardBox));
+    final sheet = tester.getRect(find.byType(GetPayInPaymentSheet));
+
+    expect(
+      box.bottom,
+      lessThanOrEqualTo(844 - 336),
+      reason: 'the bottom of the issuer page holds its code field and button',
+    );
+    expect(
+      sheet.top,
+      greaterThanOrEqualTo(47),
+      reason: 'the sheet route takes the top inset away, so the sheet has to '
+          'keep clear of the status bar itself',
+    );
+  });
+
+  testWidgets('keeps a tall sheet below the status bar with the keyboard down',
+      (tester) async {
+    tester.view
+      ..devicePixelRatio = 3
+      ..physicalSize = const Size(390 * 3, 844 * 3)
+      ..padding = const FakeViewPadding(top: 47 * 3, bottom: 34 * 3)
+      ..viewPadding = const FakeViewPadding(top: 47 * 3, bottom: 34 * 3);
+    addTearDown(tester.view.reset);
+
+    await openSheet(tester, configuration());
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+    postToCard(<String, Object?>{
+      'type': 'authenticating',
+      'stage': 'challenge',
+    });
+    await pumpFrames(tester);
+
+    expect(
+      tester.getRect(find.byType(GetPayInPaymentSheet)).top,
+      greaterThanOrEqualTo(47),
+      reason:
+          'the home indicator inset sits under the sheet, inside its height',
     );
   });
 
@@ -1487,6 +1828,229 @@ void main() {
   });
 
   /*
+   * A wallet payment can get the issuer's 3-D Secure check, drawn by the SDK over the whole
+   * wallet page. In a button-high row the payer could not answer it, so the sheet gives the
+   * wallet its whole height while the check is up, on the same page: a new one would lose it.
+   */
+  group('a bank check on the wallet', () {
+    const strings = PaymentSheetStrings();
+
+    String challenge() => '$testFieldsPageUrl#paylink-challenge';
+    String ended() => '$testFieldsPageUrl#paylink-challenge-ended';
+    String charging() => '$testFieldsPageUrl#paylink-charging';
+    double walletHeight(WidgetTester tester) =>
+        tester.getSize(find.byType(WalletSurface)).height;
+
+    testWidgets('gives the wallet the whole sheet, on the same page',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface();
+      final row = walletHeight(tester);
+
+      wallet.changeUrl(challenge());
+      await pumpFrames(tester);
+
+      expect(walletSurface(), same(wallet),
+          reason: 'a new page would lose the check');
+      expect(walletHeight(tester), greaterThan(row * 4));
+      expect(find.text(strings.newCard), findsNothing);
+      expect(find.byTooltip(strings.close), findsOneWidget);
+    });
+
+    testWidgets('holds the sheet while it is up', (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      walletSurface().changeUrl(challenge());
+      await pumpFrames(tester);
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+      await tester.pump();
+
+      expect(settled, isNull, reason: 'Back does not close it');
+
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('gives the row back when it ends with no charge',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+      final row = walletHeight(tester);
+
+      wallet.changeUrl(challenge());
+      await pumpFrames(tester);
+      wallet.changeUrl(ended());
+      await pumpFrames(tester);
+
+      expect(walletHeight(tester), row);
+      expect(find.text(strings.newCard), findsOneWidget);
+
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.cancelled);
+    });
+
+    /*
+     * The mark can land in the frame in which another payment starts, from a button the
+     * sheet is about to take away. That page is emptied as the button goes, before any
+     * charge, so the mark is ignored: taken, it would bring the wallet back beside the
+     * other payment, or lock the card screen.
+     */
+    testWidgets(
+        'a check from a button that is leaving brings it back for nothing',
+        (tester) async {
+      await openSheet(tester, slowSavedCard(Completer<CheckoutResult>()));
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      wallet.changeUrl(challenge());
+      await pumpFrames(tester);
+
+      expect(find.byType(WalletSurface), findsNothing,
+          reason: 'a saved card is being charged');
+    });
+
+    testWidgets('a check from a button the payer has left leaves the card free',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      wallet.changeUrl(challenge());
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(chargeCode(), isNotEmpty, reason: 'Pay still charges the card');
+    });
+
+    /// A touch on the wallet button, then the app behind the wallet's own sheet and back.
+    Future<void> visitTheWallet(WidgetTester tester) async {
+      await tester.tapAt(tester.getCenter(find.byType(WalletSurface)));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+    }
+
+    testWidgets("stays held past the wallet's own 15 seconds", (tester) async {
+      final pending = await openSheet(tester, configuration());
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await visitTheWallet(tester);
+      walletSurface().changeUrl(challenge());
+      await pumpFrames(tester);
+      await tester.pump(const Duration(seconds: 20));
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(settled, isNull);
+      expect(find.text(strings.newCard), findsNothing,
+          reason: 'the check is still up');
+
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('hands over a card-box failure kept for after it',
+        (tester) async {
+      final reasons = <FieldsError>[];
+
+      (await openSheet(
+        tester,
+        configuration(onHandover: reasons.add),
+        withProvider: true,
+      ))
+          .ignore();
+
+      final wallet = walletSurface();
+
+      wallet.changeUrl(challenge());
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{'type': 'error', 'code': 'session_invalid'});
+      await pumpFrames(tester);
+
+      expect(reasons, isEmpty, reason: 'the issuer may yet pass the check');
+
+      wallet.changeUrl(ended());
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      expect(reasons.single.failure, FieldsFailure.sessionInvalid);
+    });
+
+    testWidgets('ends unconfirmed after it when a stray wallet charge came in',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final old = walletSurface();
+
+      await old.navigate(
+        returnLink('success=0&invoice_id=90210&message=Declined'),
+      );
+      await pumpFrames(tester);
+
+      final fresh = walletSurface();
+
+      fresh.changeUrl(challenge());
+      await pumpFrames(tester);
+      old.changeUrl(charging());
+      await pumpFrames(tester);
+
+      expect(settled, isNull, reason: 'the check is still up');
+
+      fresh.changeUrl(ended());
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('settles on the wallet answer once the charge is out',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(challenge());
+      await pumpFrames(tester);
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+
+      expect(walletSurface(), same(wallet));
+
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.paid);
+    });
+  });
+
+  /*
    * A wallet charge runs on the page after the wallet's own sheet has closed, for the few
    * seconds the gateway takes to answer. The surface has no channel, so the page marks its
    * own address when the charge is out, and the sheet holds still until the answer.
@@ -1607,6 +2171,31 @@ void main() {
         (await pending).code,
         CheckoutResultCode.outcomeUnknown,
         reason: 'the button is still on screen while the sheet slides away',
+      );
+    });
+
+    testWidgets('a decline naming another invoice does not end it',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+
+      expect(
+        await wallet.navigate(returnLink('success=0&invoice_id=11111')),
+        NavigationDecision.prevent,
+      );
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.close));
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'the real wallet charge is still out',
       );
     });
 
@@ -2145,6 +2734,41 @@ void main() {
       );
     });
 
+    testWidgets('marked while the payer is in the wallet ends the sheet after',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      final old = walletSurface();
+
+      await tester.tap(find.text(strings.newCard));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(strings.back));
+      await pumpFrames(tester);
+      await tester.tapAt(tester.getCenter(find.byType(WalletSurface)));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      old.changeUrl(charging());
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(settled, isNull, reason: 'the payer is still in the new wallet');
+
+      await tester.pump(const Duration(seconds: 15));
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'a sheet that frees itself here takes a second payment',
+      );
+    });
+
     testWidgets(
         'closes the sheet unconfirmed on a card failure that follows it',
         (tester) async {
@@ -2286,6 +2910,52 @@ void main() {
       await pumpFrames(tester);
 
       expect(reasons.single.failure, FieldsFailure.sessionInvalid);
+    });
+
+    testWidgets('takes the wallet answer over a card form told it is paid',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{'type': 'error', 'code': 'already_paid'});
+      await pumpFrames(tester);
+      await wallet.navigate(
+        returnLink('success=1&invoice_id=90210&invoice_status=PAID'),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).status,
+        CheckoutStatus.paid,
+        reason: 'that wallet charge is what paid the invoice',
+      );
+    });
+
+    testWidgets('ends unconfirmed on a paid card form once the wallet declines',
+        (tester) async {
+      declareHostAppSchemes(const <String>['myapp']);
+
+      final pending = await openSheet(tester, configuration());
+      final wallet = walletSurface();
+
+      wallet.changeUrl(charging());
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{'type': 'error', 'code': 'already_paid'});
+      await pumpFrames(tester);
+      await wallet.navigate(
+        returnLink('success=0&invoice_id=90210&message=Declined'),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        (await pending).code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'something else paid the invoice, and nobody knows what',
+      );
     });
 
     testWidgets("keeps a saved card's charge held until it is declined",
@@ -2453,7 +3123,484 @@ void main() {
    * and no platform names the sender of a message. So it answers one charge, the one it
    * asked for, and gives its top frame to the registered origin and nothing else.
    */
+  group('a card page that cannot take the charge', () {
+    testWidgets('hands over when it cannot be asked to pay', (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      cardBox().scriptFailure = StateError('the web view is gone');
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.checkoutUnavailable,
+        reason: 'nothing reached the page, so nothing was charged',
+      );
+    });
+
+    testWidgets('hands over when it cannot be started', (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      cardBox()
+        ..scriptFailure = StateError('the web view is gone')
+        ..finishLoading();
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.checkoutUnavailable);
+    });
+
+    testWidgets('asks for the consent tick again rather than handing over',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      failTheCharge(<String, Object?>{
+        'code': 'consent_required',
+        'message': 'Tick the box to keep this card.',
+      });
+      await pumpFrames(tester);
+
+      expect(settled, isNull, reason: 'the payer can fix this on the form');
+      expect(find.text('Tick the box to keep this card.'), findsOneWidget);
+    });
+
+    testWidgets('hands over when it does not load', (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      cardBox().navigation?.onWebResourceError?.call(
+            const WebResourceError(
+              errorCode: -2,
+              description: 'no connection',
+              isForMainFrame: true,
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.checkoutUnavailable);
+    });
+
+    testWidgets('hands over when its address serves some other page',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      cardBox()
+        ..startAnswer = false
+        ..finishLoading();
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.checkoutUnavailable,
+        reason: 'an error page, or any page without the card script, '
+            'is not the card page, whatever its status said',
+      );
+    });
+
+    testWidgets('hands over when its page fails after the fields were up',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await completeTheCard(tester);
+      cardBox().navigation?.onWebResourceError?.call(
+            const WebResourceError(
+              errorCode: 2,
+              description: 'the web content process ended',
+              isForMainFrame: true,
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.checkoutUnavailable);
+    });
+
+    testWidgets('takes the wallet away on an iPhone error answer',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      walletSurface().navigation?.onHttpError?.call(
+            HttpResponseError(
+              response: WebResourceResponse(uri: null, statusCode: 502),
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(
+        find.byType(WalletSurface),
+        findsNothing,
+        reason: 'iOS names no address on an HTTP error; before the page is up, '
+            'it is the page',
+      );
+    });
+
+    testWidgets('holds through a page failure while the issuer asks',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{
+        'type': 'authenticating',
+        'stage': 'challenge',
+      });
+      await pumpFrames(tester);
+      cardBox().navigation?.onWebResourceError?.call(
+            const WebResourceError(
+              errorCode: -2,
+              description: 'no connection',
+              isForMainFrame: true,
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(settled, isNull, reason: 'the charge can still go through');
+
+      await tester.tap(find.byTooltip(const PaymentSheetStrings().close));
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.outcomeUnknown);
+    });
+
+    testWidgets('keeps holding when its page loads again mid-charge',
+        (tester) async {
+      final pending = await openSheet(tester, configuration());
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await completeTheCard(tester);
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{'type': 'charging'});
+      await pumpFrames(tester);
+      cardBox().navigation?.onPageStarted?.call(testFieldsPageUrl);
+      await pumpFrames(tester);
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+
+      expect(settled, isNull, reason: 'Back is refused while a charge is out');
+    });
+
+    testWidgets(
+        'keeps the wallet row when its page fails after the charge mark',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      final wallet = walletSurface();
+
+      wallet.changeUrl('$testFieldsPageUrl#paylink-charging');
+      await pumpFrames(tester);
+      wallet.navigation?.onWebResourceError?.call(
+        const WebResourceError(
+          errorCode: -2,
+          description: 'no connection',
+          isForMainFrame: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        find.byType(WalletSurface),
+        findsOneWidget,
+        reason: "the charge's answer arrives on that surface",
+      );
+    });
+
+    testWidgets('takes the wallet away when its address answers an error',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      walletSurface().navigation?.onHttpError?.call(
+            HttpResponseError(
+              request: WebResourceRequest(uri: Uri.parse(testFieldsPageUrl)),
+              response: WebResourceResponse(
+                uri: Uri.parse(testFieldsPageUrl),
+                statusCode: 404,
+              ),
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(find.byType(WalletSurface), findsNothing);
+    });
+
+    testWidgets('takes the wallet away when it cannot be set up',
+        (tester) async {
+      final printed = <String>[];
+      final original = debugPrint;
+
+      debugPrint =
+          (String? message, {int? wrapWidth}) => printed.add(message ?? '');
+      addTearDown(() => debugPrint = original);
+      walletSettingsApplier =
+          (controller, applied) async => throw StateError('no web view');
+      addTearDown(() => walletSettingsApplier = applyWalletSettings);
+
+      await openSheet(tester, configuration());
+      await pumpFrames(tester);
+
+      expect(find.byType(WalletSurface), findsNothing);
+      expect(
+        printed,
+        contains(contains('StateError')),
+        reason: 'a debug build says what kind of failure it was',
+      );
+    });
+
+    testWidgets('hands over when its own address answers an error',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      cardBox().navigation?.onHttpError?.call(
+            HttpResponseError(
+              request: WebResourceRequest(uri: Uri.parse(testFieldsPageUrl)),
+              response: WebResourceResponse(
+                uri: Uri.parse(testFieldsPageUrl),
+                statusCode: 403,
+              ),
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(settled?.code, CheckoutResultCode.checkoutUnavailable);
+    });
+
+    testWidgets('takes the wallet away when its page does not load',
+        (tester) async {
+      await openSheet(tester, configuration());
+
+      walletSurface().navigation?.onWebResourceError?.call(
+            const WebResourceError(
+              errorCode: -2,
+              description: 'no connection',
+              isForMainFrame: true,
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(find.byType(WalletSurface), findsNothing);
+    });
+
+    testWidgets('takes no charge while it loads again', (tester) async {
+      await openSheet(tester, configuration());
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      cardBox().navigation?.onPageStarted?.call(testFieldsPageUrl);
+      await pumpFrames(tester);
+      await tester.tap(find.text(r'Pay $97.42'), warnIfMissed: false);
+      await pumpFrames(tester);
+
+      expect(
+        cardBox().scripts.where((script) => script.contains('.pay(')),
+        isEmpty,
+        reason: 'the page loading has no fields to take the charge',
+      );
+    });
+
+    testWidgets('is started again when it loads again', (tester) async {
+      await openSheet(tester, configuration());
+      await completeTheCard(tester);
+      cardBox().finishLoading();
+      await pumpFrames(tester);
+
+      expect(
+        cardBox().scripts.where((script) => script.contains('.start(')),
+        hasLength(2),
+        reason: 'a page that reloaded has no fields until it is started',
+      );
+    });
+  });
+
   group('a message the card box never asked for', () {
+    String message(Map<String, Object?> event) => jsonEncode(event);
+
+    testWidgets('hands an old card page over before anything is charged',
+        (tester) async {
+      final reasons = <FieldsError>[];
+      final pending = await openSheet(
+        tester,
+        configuration(fallBackToHostedCheckout: false, onHandover: reasons.add),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      cardBox().postAsFrame(message(<String, Object?>{
+        'type': 'ready',
+        'amountMinor': 9742,
+        'currency': 'USD',
+      }));
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.checkoutUnavailable,
+        reason: 'a page that carries no key would never be heard answering',
+      );
+    });
+
+    testWidgets('does not hold the sheet for a charge mark from a frame',
+        (tester) async {
+      final notes = <String>[];
+      final pending =
+          await openSheet(tester, configuration(onDiagnostic: notes.add));
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await completeTheCard(tester);
+      cardBox().postAsFrame(message(<String, Object?>{'type': 'charging'}));
+      await pumpFrames(tester);
+      await tester.tap(find.byTooltip(const PaymentSheetStrings().close));
+      await pumpFrames(tester);
+
+      expect(
+        settled?.status,
+        CheckoutStatus.cancelled,
+        reason: 'nothing was charged, and nothing the page said says so',
+      );
+      expect(notes, contains(startsWith('refused')));
+    });
+
+    testWidgets('says in the log that it could not read a message',
+        (tester) async {
+      final notes = <String>[];
+
+      await openSheet(tester, configuration(onDiagnostic: notes.add));
+      await completeTheCard(tester);
+      cardBox().postAsFrame('not a message');
+      await pumpFrames(tester);
+
+      expect(notes, contains(startsWith('refused a message')));
+    });
+
+    testWidgets('says in the log why it kept its page from leaving',
+        (tester) async {
+      final notes = <String>[];
+
+      await openSheet(tester, configuration(onDiagnostic: notes.add));
+      await completeTheCard(tester);
+      await cardBox().navigate('https://elsewhere.example/landing?code=1');
+      await pumpFrames(tester);
+
+      expect(
+        notes,
+        contains(
+            allOf(contains('elsewhere.example'), isNot(contains('code=1')))),
+      );
+    });
+
+    testWidgets('says in the log why it handed over', (tester) async {
+      final notes = <String>[];
+
+      await openSheet(
+        tester,
+        configuration(onDiagnostic: notes.add, fallBackToHostedCheckout: false),
+      );
+      cardBox().navigation?.onWebResourceError?.call(
+            const WebResourceError(
+              errorCode: -2,
+              description: 'no connection',
+              isForMainFrame: true,
+            ),
+          );
+      await pumpFrames(tester);
+
+      expect(notes, contains(contains('could not be loaded')));
+    });
+
+    testWidgets('says in the log why it dropped an answer', (tester) async {
+      final notes = <String>[];
+
+      await openSheet(tester, configuration(onDiagnostic: notes.add));
+      await tester.tap(find.text(const PaymentSheetStrings().newCard));
+      await pumpFrames(tester);
+      await completeTheCard(tester);
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      postToCard(<String, Object?>{
+        'type': 'payment',
+        'success': true,
+        'invoiceId': 90210,
+        'paidStatus': 'PAID',
+      });
+      await pumpFrames(tester);
+
+      expect(
+        notes,
+        contains(allOf(startsWith('refused'), contains('payment approved'))),
+        reason: 'an answer dropped in silence leaves nothing to debug',
+      );
+    });
+
     testWidgets('is not reported as a payment', (tester) async {
       final pending = await openSheet(tester, configuration());
 

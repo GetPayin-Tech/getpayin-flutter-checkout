@@ -89,7 +89,7 @@ none. It is the stable value to branch on and to look a message of your own up b
 | --------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------- |
 | `null`                                        | The checkout declined or failed the payment.            | Show `message`. Offer a retry.                                       |
 | `CheckoutResultCode.unreadableReturnLink`     | The link's own fields could not be read.                | Check the invoice on your server. Alert on this one; it is a bug.    |
-| `CheckoutResultCode.wrongInvoice`             | The link named another invoice.                         | Check the invoice on your server. Do not retry blindly.              |
+| `CheckoutResultCode.wrongInvoice`             | A paid claim named another invoice.                     | Check the invoice on your server. Do not retry blindly.              |
 | `CheckoutResultCode.unexpectedInvoiceStatus`  | A paid claim whose invoice status is not `PAID`.        | Check the invoice on your server. An authorised invoice is not paid. |
 | `CheckoutResultCode.outcomeUnknown`           | No answer came back, or the invoice was already paid.   | Check the invoice on your server. Never charge again on this one.    |
 | `CheckoutResultCode.checkoutUnavailable`      | The payment sheet could not be shown at all.            | Nothing was charged. Open the hosted checkout, or show `message`.    |

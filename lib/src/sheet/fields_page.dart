@@ -9,6 +9,32 @@ const String fieldsChannelName = 'PayLinkFields';
 /// has scripted, so its address is the one thing the page can change and the host can see.
 const String walletChargingFragment = 'paylink-charging';
 
+/// The fragment the wallet page sets on its own address when it cannot show the wallet.
+///
+/// Set only before its button is up: the SDK address it was sent is not one it was made
+/// for, it could not start, or the wallet is not available on this phone. Once the button is
+/// up, a wallet error is about one attempt, and the button stays.
+const String walletUnavailableFragment = 'paylink-wallet-unavailable';
+
+/// The fragment the wallet page sets on its own address while the issuer's 3-D Secure check
+/// is up.
+///
+/// PayLink's SDK draws the check over the whole page, and the wallet row is a button's
+/// height, so the host gives the page room for it until the check has gone.
+const String walletChallengeFragment = 'paylink-challenge';
+
+/// The fragment the wallet page sets on its own address when the check has gone with no
+/// charge: the payer gave up, or the issuer said no. A check that is passed is followed by
+/// [walletChargingFragment] instead.
+const String walletChallengeEndedFragment = 'paylink-challenge-ended';
+
+/// Where PayLink at [host] serves its SDK, for a page that should load it from there.
+///
+/// A closing slash on the host is dropped, so the address is the one `/init` reports and
+/// the page's check of it matches.
+String paylinkSdkUrl(String host) =>
+    '${host.replaceFirst(RegExp(r'/+$'), '')}/sdk/paylink-fields-v1.js';
+
 /// Builds the page that hosts PayLink's card fields.
 ///
 /// **You host this file yourself**, on the origin registered on your integration, over
@@ -42,6 +68,9 @@ String buildFieldsPageHtml({
   );
   final channelName = jsonEncode(channel);
   final charging = jsonEncode(walletChargingFragment);
+  final unavailable = jsonEncode(walletUnavailableFragment);
+  final challenge = jsonEncode(walletChallengeFragment);
+  final challengeEnded = jsonEncode(walletChallengeEndedFragment);
 
   return '''
 <!doctype html>
@@ -139,35 +168,83 @@ String buildFieldsPageHtml({
   var DEFAULT_SDK = $script;
   var KNOWN_SDKS = $known;
   var CHARGING = $charging;
+  var UNAVAILABLE = $unavailable;
+  var CHALLENGE = $challenge;
+  var CHALLENGE_ENDED = $challengeEnded;
   var fields = null;
   var started = false;
   var loading = null;
+  var inWallet = false;
+  var walletShown = false;
+  var challengeShown = false;
 
   /*
-   * The code the host sent with its last charge. A failure carries it back: the channel is
-   * open to every frame on this page, and only this page was handed the code, so the host
-   * takes a failure during a charge only when it has it.
+   * The wallet page has no channel, so a failure it posts reaches nobody, and the host would
+   * be left with an empty row where the button should be. Until the button is up, the page
+   * says on its own address that it cannot show the wallet. After that a failure is about
+   * one attempt, and the button stays.
    */
-  var attempt = null;
+  function walletUnavailable() {
+    if (!walletShown) { window.location.hash = UNAVAILABLE; }
+  }
+
+  /*
+   * The issuer's check is drawn over the whole page, and the wallet row is a button's height.
+   * The page says on its address while the check is up, so the host makes room for it, and
+   * says when it has gone with no charge, so the host gives the row back. A check that is
+   * passed is followed by the charge's own mark.
+   */
+  function walletChallenge() {
+    challengeShown = true;
+    window.location.hash = CHALLENGE;
+  }
+
+  function walletChallengeEnded() {
+    if (challengeShown) {
+      challengeShown = false;
+      window.location.hash = CHALLENGE_ENDED;
+    }
+  }
+
+  /*
+   * The key the host handed this page when it started the fields. Every message carries it:
+   * the channel is open to every frame on this page, and only this page was handed the key,
+   * so the host takes a message only when it has it.
+   */
+  var pageKey = null;
 
   function post(message) {
     var channel = window[CHANNEL];
+
+    if (pageKey) { message.pageKey = pageKey; }
 
     if (channel && typeof channel.postMessage === 'function') {
       channel.postMessage(JSON.stringify(message));
     }
   }
 
-  function fail(error) {
+  /*
+   * A failure carries a charge's code only when it is that charge's own, and then the code
+   * that charge was sent with, kept with the call that made it. The host takes a failure
+   * during a charge only when it carries that charge's code, so a late failure of an earlier
+   * charge cannot end a later one, and an error the SDK reports on its own, which carries no
+   * code, cannot end one at all: the charge's own answer says how it ended.
+   */
+  function fail(error, code) {
     var failure = {
       type: 'error',
       code: (error && error.code) || 'unknown',
       message: (error && error.message) || 'The card could not be taken.'
     };
 
-    if (attempt) { failure.attempt = attempt; }
+    if (code) { failure.attempt = code; }
 
     post(failure);
+
+    if (inWallet) {
+      walletUnavailable();
+      walletChallengeEnded();
+    }
   }
 
   /**
@@ -324,14 +401,24 @@ String buildFieldsPageHtml({
       });
     });
     instance.on('authenticating', function (event) {
-      post({ type: 'authenticating', stage: (event && event.stage) || 'setup' });
+      var stage = (event && event.stage) || 'setup';
+
+      post({ type: 'authenticating', stage: stage });
+
+      if (inWallet && stage === 'challenge') { walletChallenge(); }
     });
     instance.on('charging', function () { post({ type: 'charging' }); });
     instance.on('walletready', function (event) {
+      walletShown = true;
       post({ type: 'walletready', paymentTypes: (event && event.paymentTypes) || [] });
     });
     instance.on('walleterror', function (event) {
       post({ type: 'walleterror', message: event && event.message });
+
+      if (inWallet) {
+        walletUnavailable();
+        walletChallengeEnded();
+      }
     });
     instance.on('error', fail);
 
@@ -352,7 +439,10 @@ String buildFieldsPageHtml({
       if (result && result.returnUrl) { window.location.href = result.returnUrl; }
     }
 
-    instance.on('charging', function () { window.location.hash = CHARGING; });
+    instance.on('charging', function () {
+      challengeShown = false;
+      window.location.hash = CHARGING;
+    });
     instance.on('success', go);
     instance.on('declined', go);
   }
@@ -361,6 +451,8 @@ String buildFieldsPageHtml({
     if (started) { return; }
 
     started = true;
+    inWallet = !!walletMode;
+    pageKey = config.pageKey || null;
 
     loadSdk(config.sdkUrl).then(function () {
       mount(config, walletMode);
@@ -419,12 +511,14 @@ String buildFieldsPageHtml({
   window.__paylinkHost = {
     start: function (config) { start(config || {}, false); },
     pay: function (options) {
-      if (!fields) { return; }
-
       var asked = options || {};
-      var parts = expiry();
 
-      attempt = asked.attempt;
+      if (!fields) {
+        fail({ code: 'not_mounted', message: 'The card fields are not ready.' }, asked.attempt);
+        return;
+      }
+
+      var parts = expiry();
 
       if (asked.billing) { parts.billing = asked.billing; }
       if (asked.tokenize) { parts.tokenize = true; }
@@ -440,7 +534,7 @@ String buildFieldsPageHtml({
           returnUrl: result.returnUrl,
           attempt: asked.attempt
         });
-      }).catch(fail);
+      }).catch(function (error) { fail(error, asked.attempt); });
     },
     destroy: function () {
       if (fields) { fields.destroy(); fields = null; started = false; }
@@ -457,7 +551,12 @@ String buildFieldsPageHtml({
     var token = hash.get('t');
     var sdkUrl = hash.has('s') ? knownSdk(hash.get('s')) : DEFAULT_SDK;
 
-    if (!token || !sdkUrl) { return; }
+    if (!token) { return; }
+
+    if (!sdkUrl) {
+      walletUnavailable();
+      return;
+    }
 
     start({
       clientToken: token,

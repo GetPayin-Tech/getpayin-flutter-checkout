@@ -149,6 +149,7 @@ GetPayInCheckoutView({
   String? linkErrorMessage,
   CheckoutLoadErrorCallback? onLoadError,
   VoidCallback? onPageLoaded,
+  VoidCallback? onPassedOver,
 })
 ```
 
@@ -167,6 +168,12 @@ your screen is closed then, report the payment as `CheckoutResultCode.outcomeUnk
 as cancelled, and keep the view on screen under your message so a late answer still
 arrives. A failed page finishes loading too, so note whether it had loaded as the failure
 arrives. `GetPayInProvider`'s own screen does exactly this.
+
+`onPassedOver` fires when, with `expectedInvoiceId` set, the page went to a return link that
+names another invoice, or none. The view stops that link and goes on waiting for its own,
+but the real payment may still be running: a screen of yours closed after it should report
+`CheckoutResultCode.outcomeUnknown`, never cancelled. `CheckoutNavigationHandler` takes the
+same `onPassedOver`.
 
 Do not register a JavaScript channel on this view, call `runJavaScript` on it, or add
 scripts to a web view of your own around it.
@@ -238,26 +245,30 @@ compared by address and path: list every PayLink whose wallet payments the page 
 For a sheet of your own. [Building your own sheet](payment-sheet.md#building-your-own-sheet)
 says how they fit together.
 
-| Export                       | What it is                                                                                                   |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `CardFieldsController`       | The card box: the page, the channel, and the events it reports.                                              |
-| `CardFieldsSnapshot`         | What the box knows at one moment. `chargeStarted` is true from the charge until its answer.                  |
-| `applyFieldsEvent`           | What one event does to a snapshot, as a pure function.                                                       |
-| `FieldsEvent`                | What the page reports. The eight kinds are listed below the table.                                           |
-| `FieldsPayment.attempt`      | The code the host sent with the charge; the box reports only an answer that carries it back.                 |
-| `FieldsError.attempt`        | The same code on a failure; while a charge runs, the box takes only a failure that carries it.               |
-| `payCommand({..., attempt})` | The script that charges the card, carrying that code.                                                        |
-| `FieldsFailure`              | Why the fields could not take the payment. `sendsPayerToHostedCheckout` says which ones hand the payer over. |
-| `WalletSurface`              | The wallet button. `onCharging` says its charge is out; `onChargingAfterLeaving`, the same after it left.    |
-| `PayLinkFieldsSession`       | The payment, as `/init` described it.                                                                        |
+| Export                           | What it is                                                                                                                                          |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CardFieldsController`           | The card box: the page, the channel, and the events it reports.                                                                                     |
+| `CardFieldsController.onRefused` | One line for each message the box refused, and why: one without the page's key, or an answer to no charge it is waiting for.                        |
+| `CardFieldsSnapshot`             | What the box knows at one moment. `chargeStarted` is true from the charge until its answer.                                                         |
+| `applyFieldsEvent`               | What one event does to a snapshot, as a pure function.                                                                                              |
+| `FieldsEvent`                    | What the page reports. The eight kinds are listed below the table.                                                                                  |
+| `FieldsPayment.attempt`          | The code the host sent with the charge; the box reports only an answer that carries it back.                                                        |
+| `FieldsError.attempt`            | The same code on a failure; while a charge runs, the box takes only a failure that carries it.                                                      |
+| `payCommand({..., attempt})`     | The script that charges the card, carrying that code.                                                                                               |
+| `FieldsFailure`                  | Why the fields could not take the payment. `sendsPayerToHostedCheckout` says which ones hand the payer over.                                        |
+| `WalletSurface`                  | The wallet button. `onCharging` says its charge is out; `onChargingAfterLeaving`, the same after it left; `onUnavailable`, that it cannot be shown; `onChallenge`, that the issuer's check is up or has gone. |
+| `PayLinkFieldsSession`           | The payment, as `/init` described it.                                                                                                               |
 
 A `FieldsEvent` is one of `FieldsReady`, `FieldsChanged`, `FieldsAuthenticating`,
 `FieldsCharging`, `FieldsPayment`, `FieldsError`, `FieldsWalletReady` and
 `FieldsWalletError`.
 
-`FieldsFailure` names every code PayLink's fields can send. `alreadyPaid` is fatal but never
-sends the payer to the hosted checkout: the sheet reports it as `outcomeUnknown`. `notPayable`
-and `expired` hand the payer over like the other fatal ones, and PayLink's page says why.
+`FieldsFailure` names every code PayLink's fields send about a payment. `alreadyPaid` is fatal
+but never sends the payer to the hosted checkout: the sheet reports it as `outcomeUnknown`.
+`notPayable` and `expired` hand the payer over like the other fatal ones, and PayLink's page
+says why. `consentRequired` asks the payer to tick the box that keeps the card. A code about
+the page itself, such as a missing container or client token, arrives as `unknown` and hands
+the payer over.
 
 ## `PaymentReturnRedirect`
 
@@ -323,7 +334,7 @@ on, and the key to look a message of your own up by.
 | Code                      | What happened                                                                                               |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `unreadableReturnLink`    | The link's own fields could not be read. Alert on it: the backend and this reader disagree about the shape. |
-| `wrongInvoice`            | The link named an invoice other than the one the checkout was opened for.                                   |
+| `wrongInvoice`            | A paid claim named an invoice other than the one it was bound to. A checkout passes over such a link.       |
 | `unexpectedInvoiceStatus` | A paid claim (a link, the sheet's charge, a saved card) whose `invoice_status` is not `PAID`.               |
 | `outcomeUnknown`          | A charge was sent and its answer never arrived, or PayLink said the invoice was already paid.               |
 | `checkoutUnavailable`     | The sheet could not be shown at all and its hosted fallback was off. Nothing was charged.                   |
@@ -354,8 +365,10 @@ them, or recognise the message a cancelled result carries. `closedByAppMessage` 
 in-app checkout settles with when your app takes its screen away in its own code. A reset
 that takes the provider away too settles with `closedByUnmountMessage`; a provider mounted
 above the navigator stays, so it reports `closedByAppMessage` even when the whole app is
-replaced. Both mean the screen went with no answer. After a failure once the checkout page
-had loaded, neither is used: the checkout settles `notPaid` with `outcomeUnknown`.
+replaced. A provider that goes while its screen stays, as one inside a router shell can,
+takes the screen away with it. Both mean the screen went with no answer. After a failure
+once the checkout page had loaded, neither is used: the checkout settles `notPaid` with
+`outcomeUnknown`.
 
 ## Errors
 

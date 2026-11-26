@@ -75,7 +75,9 @@ bool _opens(String link, NavigationContext context) =>
 ///
 /// It has to be one the web view can be handed, too: a link that passes the rules but
 /// that `Uri` cannot read, such as a host with an unclosed `[`, would throw in the middle
-/// of the checkout's navigation instead of telling the payer anything.
+/// of the checkout's navigation instead of telling the payer anything. So would decoding
+/// one: a cut-off escape throws an `ArgumentError`, and an escape that is not UTF-8 a
+/// `FormatException`, so any throw means there is no page.
 String? _webPage(String? encoded, NavigationContext context) {
   if (encoded == null) {
     return null;
@@ -85,7 +87,7 @@ String? _webPage(String? encoded, NavigationContext context) {
 
   try {
     page = Uri.decodeComponent(encoded);
-  } on ArgumentError {
+  } catch (_) {
     return null;
   }
 

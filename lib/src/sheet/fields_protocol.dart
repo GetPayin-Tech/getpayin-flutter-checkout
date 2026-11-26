@@ -19,7 +19,8 @@ class FieldsReady extends FieldsEvent {
   /// Creates the ready event.
   const FieldsReady({required this.amountMinor, required this.currency});
 
-  /// What will be charged, in the currency's minor units, after any conversion.
+  /// What will be charged, after any conversion, in hundredths whatever the currency (see
+  /// `formatAmount`).
   final int amountMinor;
 
   /// The currency it will be charged in.
@@ -216,6 +217,21 @@ FieldsEvent? parseFieldsEvent(String raw) {
   };
 }
 
+/// The key a message from the fields page carries, or null when it carries none.
+///
+/// Never throws, like [parseFieldsEvent]: a message nobody can read has no key either.
+String? fieldsPageKeyOf(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+
+    return decoded is Map<String, Object?>
+        ? _stringAt(decoded, 'pageKey')
+        : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Turns the charge PayLink reported into a result, by the rules every claim goes through.
 ///
 /// Two sources can say an invoice was paid: the return link the hosted checkout comes back
@@ -297,11 +313,15 @@ String describeFieldsEvent(FieldsEvent event) {
 /// page is hosted once and a payment knows which PayLink it belongs to, so the host says
 /// which one rather than the page deciding when it was generated — a page pinned to one
 /// environment and a token minted on another fails with an error naming the wrong system.
+///
+/// [pageKey] is a code the page puts on every message it sends back. The channel carries
+/// messages from everything the page frames, and only the page itself was handed the key.
 String startFieldsCommand({
   required String clientToken,
   required Map<String, Object?> style,
   List<String> wallets = const <String>[],
   String? sdkUrl,
+  String? pageKey,
   bool collectName = false,
   bool collectConsent = false,
   String nameLabel = 'Name on card',
@@ -312,6 +332,7 @@ String startFieldsCommand({
   final config = jsonEncode(<String, Object?>{
     'clientToken': clientToken,
     if (sdkUrl != null) 'sdkUrl': sdkUrl,
+    if (pageKey != null) 'pageKey': pageKey,
     'wallets': wallets,
     'style': style,
     'collectName': collectName,
@@ -322,7 +343,9 @@ String startFieldsCommand({
     'securityCodeLabel': securityCodeLabel,
   });
 
-  return 'window.__paylinkHost && window.__paylinkHost.start($config);';
+  // Answers whether the page had the card page's script to start, so a host that runs it for
+  // its result can tell the card page from any other page at the same address.
+  return '!!(window.__paylinkHost && (window.__paylinkHost.start($config), true));';
 }
 
 /// The JavaScript that takes the fields down.

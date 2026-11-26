@@ -127,6 +127,35 @@ void main() {
       await open;
     });
 
+    test('lends nothing once the checkout that lent it has ended', () async {
+      final guard = SessionGuard();
+      final sheet = Completer<void>();
+      final server = Completer<void>();
+      final other = Completer<void>();
+      final open = guard.run(() => sheet.future);
+      final charge = guard.lend(() async {
+        await server.future;
+
+        return guard.run(() async => 'challenge');
+      });
+
+      sheet.complete();
+      await open;
+
+      final next = guard.run(() => other.future);
+
+      server.complete();
+
+      await expectLater(
+        charge,
+        throwsA(isA<GetPayInSessionBusyError>()),
+        reason: 'the sheet is gone, and another checkout holds the place now',
+      );
+
+      other.complete();
+      await next;
+    });
+
     test('lends nothing to another guard', () async {
       final mine = SessionGuard();
       final theirs = SessionGuard();

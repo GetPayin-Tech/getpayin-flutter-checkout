@@ -212,6 +212,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return controller;
   }
 
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadCards());
+  }
+
   /// Asks the dev server which cards it is holding.
   ///
   /// Says in the trace what came back, so a sheet with no saved card reads as either "the

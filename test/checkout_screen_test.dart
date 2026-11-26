@@ -300,6 +300,57 @@ void main() {
   });
 
   /*
+   * A provider inside a nested navigator (a router shell, a tab) presents on the root one,
+   * which outlives it. The checkout settles as the provider goes; the screen it left on the
+   * root navigator must go with it, or the payer could still pay on a screen whose close
+   * button no longer reaches anything.
+   */
+  testWidgets('takes its screen away when it goes while the screen stays',
+      (tester) async {
+    final shellShown = ValueNotifier<bool>(true);
+
+    addTearDown(shellShown.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<bool>(
+          valueListenable: shellShown,
+          builder: (context, shown, _) => shown
+              ? Navigator(
+                  onGenerateRoute: (_) => MaterialPageRoute<void>(
+                    builder: (_) => const GetPayInProvider(child: Text('shop')),
+                  ),
+                )
+              : const Text('elsewhere'),
+        ),
+      ),
+    );
+
+    final pending = GetPayInCheckout.open(
+      testCheckoutUrl,
+      const OpenCheckoutOptions(
+        returnUrl: testReturnUrl,
+        presentation: CheckoutPresentation.inApp,
+      ),
+    );
+
+    await pumpFrames(tester);
+
+    expect(find.byType(GetPayInCheckoutView), findsOneWidget);
+
+    shellShown.value = false;
+    await pumpFrames(tester);
+
+    final result = await pending;
+
+    expect(result.status, CheckoutStatus.cancelled);
+    expect(result.message, closedByUnmountMessage);
+    expect(find.byType(GetPayInCheckoutView), findsNothing);
+    expect(find.text('elsewhere'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  /*
    * An app can take the checkout screen away in its own code, and neither a pop nor a reset
    * of its screens asks the screen first. Left unsettled, `open()` would never return and
    * every later checkout would be refused as busy.
@@ -629,6 +680,43 @@ void main() {
       expect(launcher.launches, isEmpty);
       expect(webView.loadedUri, Uri.parse(fallback));
     });
+
+    testWidgets('loads its web page only into the checkout it came from',
+        (tester) async {
+      final answer = Completer<bool>();
+
+      Widget view(String checkoutUrl) => MaterialApp(
+            home: GetPayInCheckoutView(
+              checkoutUrl: checkoutUrl,
+              returnUrl: testReturnUrl,
+              onComplete: (_) {},
+            ),
+          );
+
+      launcher.answer = answer;
+      await tester.pumpWidget(view(testCheckoutUrl));
+      await pumpFrames(tester);
+
+      final first = webView.controllers.last;
+
+      webView.finishLoading();
+      await webView.navigate(link);
+      await tester.pumpWidget(view('$testCheckoutUrl?next=1'));
+      await pumpFrames(tester);
+
+      final second = webView.controllers.last;
+
+      expect(second, isNot(same(first)));
+
+      answer.complete(false);
+      await pumpFrames(tester);
+
+      expect(
+        second.loaded,
+        isNot(contains(Uri.parse(fallback))),
+        reason: "one payer's bank page has no place in another's checkout",
+      );
+    });
   });
 
   testWidgets('carries on through a load the web view only cancelled',
@@ -698,6 +786,38 @@ void main() {
     await pending;
   });
 
+  testWidgets('reports an iPhone HTTP error, which names no address',
+      (tester) async {
+    await mountApp(tester);
+
+    final pending = GetPayInCheckout.open(
+      testCheckoutUrl,
+      const OpenCheckoutOptions(
+        returnUrl: testReturnUrl,
+        presentation: CheckoutPresentation.inApp,
+      ),
+    );
+
+    await pumpFrames(tester);
+    webView.startLoading(testCheckoutUrl);
+    webView.delegate?.onHttpError?.call(
+      HttpResponseError(
+        response: WebResourceResponse(uri: null, statusCode: 502),
+      ),
+    );
+    await pumpFrames(tester);
+
+    expect(
+      find.text(defaultLoadErrorMessage),
+      findsOneWidget,
+      reason: 'before the first page is up, an error answer is that page',
+    );
+
+    await tester.tap(find.text(defaultCloseLabel));
+    await pumpFrames(tester);
+    await pending;
+  });
+
   testWidgets('reports a page the web view could not even be asked to load', (
     tester,
   ) async {
@@ -720,6 +840,71 @@ void main() {
 
     expect(failures.single, contains(defaultLoadErrorMessage));
     expect(failures.single, contains('no web view'));
+  });
+
+  /*
+   * A page can go to a return link that names another invoice: a stale checkout, or a
+   * made-up link. It is not this checkout's answer, so the screen goes on; and because the
+   * real payment may still be running, a close after it cannot be "nothing happened".
+   */
+  group('a return link naming another invoice', () {
+    const options = OpenCheckoutOptions(
+      returnUrl: testReturnUrl,
+      presentation: CheckoutPresentation.inApp,
+      expectedInvoiceId: 'INV-1',
+    );
+
+    Future<Future<CheckoutResult>> passOver(WidgetTester tester) async {
+      await mountApp(tester);
+
+      final pending = GetPayInCheckout.open(testCheckoutUrl, options);
+
+      await pumpFrames(tester);
+      webView.finishLoading();
+      await pumpFrames(tester);
+
+      expect(
+        await webView.navigate(returnLink('success=0&invoice_id=INV-OTHER')),
+        NavigationDecision.prevent,
+      );
+      await pumpFrames(tester);
+
+      return pending;
+    }
+
+    testWidgets('leaves the checkout on screen', (tester) async {
+      final pending = await passOver(tester);
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+      await pumpFrames(tester);
+
+      expect(settled, isNull);
+      expect(find.byType(GetPayInCheckoutView), findsOneWidget);
+    });
+
+    testWidgets('still settles on the link that names its invoice',
+        (tester) async {
+      final pending = await passOver(tester);
+
+      await webView.navigate(returnLink('success=1&invoice_id=INV-1'));
+      await pumpFrames(tester);
+
+      expect((await pending).status, CheckoutStatus.paid);
+    });
+
+    testWidgets('is closed as unconfirmed after it, never as cancelled',
+        (tester) async {
+      final pending = await passOver(tester);
+
+      await tester.tap(find.text(defaultCloseLabel));
+      await pumpFrames(tester);
+
+      final result = await pending;
+
+      expect(result.status, CheckoutStatus.notPaid);
+      expect(result.code, CheckoutResultCode.outcomeUnknown);
+    });
   });
 
   testWidgets('starts a new checkout when the checkout URL changes',
@@ -749,6 +934,55 @@ void main() {
       <String>['FIRST', 'SECOND'],
     );
     expect(webView.loadedUri, Uri.parse('$testCheckoutUrl?attempt=2'));
+  });
+
+  /*
+   * The old web view goes on running for a moment after a new checkout replaces it, and its
+   * page can still navigate or fail. None of that is the new checkout's.
+   */
+  testWidgets('ignores the old web view once a new checkout has started',
+      (tester) async {
+    final results = <CheckoutResult>[];
+    final failures = <String>[];
+    var pagesLoaded = 0;
+
+    Widget view(String checkoutUrl) {
+      return MaterialApp(
+        home: GetPayInCheckoutView(
+          checkoutUrl: checkoutUrl,
+          returnUrl: testReturnUrl,
+          onComplete: results.add,
+          onLoadError: (message, _) => failures.add(message),
+          onPageLoaded: () => pagesLoaded += 1,
+        ),
+      );
+    }
+
+    await tester.pumpWidget(view(testCheckoutUrl));
+    await pumpFrames(tester);
+
+    final old = webView.controllers.last;
+
+    await tester.pumpWidget(view('$testCheckoutUrl?attempt=2'));
+    await pumpFrames(tester);
+
+    expect(
+      await old.navigate(returnLink('success=0&invoice_id=FIRST')),
+      NavigationDecision.prevent,
+    );
+    old.finishLoading();
+    old.navigation?.onWebResourceError?.call(
+      const WebResourceError(errorCode: -1, description: 'gone'),
+    );
+    await pumpFrames(tester);
+
+    expect(results, isEmpty, reason: 'the new checkout is still running');
+    expect(failures, isEmpty);
+    expect(pagesLoaded, 0);
+
+    await webView.navigate(returnLink('success=1&invoice_id=SECOND'));
+
+    expect(results.single.invoiceId, 'SECOND');
   });
 
   /*

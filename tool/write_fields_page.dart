@@ -16,9 +16,7 @@ import 'package:getpayin_checkout/src/sheet/fields_page.dart';
 void main(List<String> arguments) {
   final hosts =
       arguments.isEmpty ? const <String>['<YOUR-PAYLINK-HOST>'] : arguments;
-  final sdks = <String>[
-    for (final host in hosts) '$host/sdk/paylink-fields-v1.js',
-  ];
+  final sdks = <String>[for (final host in hosts) paylinkSdkUrl(host)];
 
   stdout.write(
     buildFieldsPageHtml(sdkUrl: sdks.first, otherSdkUrls: sdks.sublist(1)),

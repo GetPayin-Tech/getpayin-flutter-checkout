@@ -151,19 +151,16 @@ void main() {
         'a separator variant of the status',
         'success=1&invoice-status=PAID&invoice_id=7'
       ),
-      (
-        'a name PHP reads as the invoice id',
-        'success=1&invoice_id=7&invoice[id=5001'
-      ),
+      ('a bracket in a name', 'success=1&invoice_id=7&invoice[id=5001'),
       ('a bracket written encoded', 'success=1&invoice_id=7&invoice%5Bid=5001'),
-      ('a field PHP reads as a list', 'success=1&invoice_id=7&success[]=0'),
+      ('a name ending in brackets', 'success=1&invoice_id=7&success[]=0'),
       (
-        'a name PHP cuts at a NUL byte',
+        'a NUL byte in a name',
         'success=1&invoice_status=PAID&invoice_id=7&success%00=0'
             '&invoice_status%00=UNPAID'
       ),
       (
-        'a NUL byte that moves the invoice',
+        'a NUL byte after a field name',
         'success=1&invoice_id=5001&invoice_id%00=7'
       ),
       ('a control character in a name', 'success=1&invoice_id=7&x%01y=1'),

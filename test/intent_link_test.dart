@@ -49,6 +49,8 @@ void main() {
         'myapp%3A%2F%2Fpayment-return%3Fsuccess%3D1',
         '%2Frelative',
         '%E0%A4%A',
+        'https%3A%2F%2Fbank.example%2Fp%E9ge',
+        '%FF',
         'https%3A%2F%2F%5B%3A%3A1%2F',
       ]) {
         expect(

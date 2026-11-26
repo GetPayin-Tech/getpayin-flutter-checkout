@@ -66,11 +66,35 @@ class _GetPayInProviderState extends State<GetPayInProvider> {
 
   @override
   void dispose() {
+    final route = _route;
+
     unregisterPresenter(_present);
     _navigator = null;
     _route = null;
     _host.dispose();
+    _removeOnceBuilt(route);
     super.dispose();
+  }
+
+  /// Takes away a checkout screen the provider leaves behind as it goes.
+  ///
+  /// A provider inside a nested navigator — a router shell, a tab — presents on the root
+  /// one, which outlives it. The checkout has just settled, and the screen's close button
+  /// reaches nothing any more, so left there it is a payment screen the payer can still pay
+  /// on and cannot leave. A navigator cannot be changed while the tree is being torn down,
+  /// so it goes after the frame; if its own navigator went too, there is nothing to do.
+  void _removeOnceBuilt(Route<void>? route) {
+    if (route == null) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigator = route.navigator;
+
+      if (route.isActive && navigator != null) {
+        navigator.removeRoute(route);
+      }
+    });
   }
 
   /// Presents [request] and completes once the checkout ends.
@@ -248,6 +272,24 @@ class _CheckoutScreenState extends State<_CheckoutScreen> {
 
   void _onPageLoaded() => _pageLoaded = true;
 
+  /// The page went to a link for another invoice, which the view passed over.
+  ///
+  /// The real payment may still be running, so from now on a checkout that goes without an
+  /// answer is one nobody can confirm. A failure already on screen keeps its own message.
+  void _onPassedOver() {
+    if (!mounted || _loadError != null) {
+      return;
+    }
+
+    widget.onUnconfirmed(
+      const CheckoutResult(
+        status: CheckoutStatus.notPaid,
+        code: CheckoutResultCode.outcomeUnknown,
+        message: closedByPayerMessage,
+      ),
+    );
+  }
+
   /// Closes the checkout at the payer's request, with the close button or Back.
   void _close() => widget.onCancel(_loadError);
 
@@ -350,6 +392,7 @@ class _CheckoutScreenState extends State<_CheckoutScreen> {
       onComplete: widget.onFinish,
       onLoadError: _onLoadError,
       onPageLoaded: _onPageLoaded,
+      onPassedOver: _onPassedOver,
     );
   }
 

@@ -122,13 +122,14 @@ void main() {
     });
 
     /*
-     * The plugin can hand the launch link over twice, by both of its paths, which is why
-     * the watcher remembers the links it saw while starting. A link that arrived later with
-     * nobody waiting was dropped, and that is the whole of it: it is not held against a
-     * checkout it reaches afterwards, and the app's own links are not kept for the life of
-     * the process.
+     * The plugin can hand a link over again: by both of its paths, or to an activity Android
+     * recreated. A link that reached the app with nobody waiting belongs to a checkout that
+     * is over, so a second delivery of it is refused rather than offered to the next one. A
+     * repeat comes within moments, so it is kept for ten minutes, not for the life of the
+     * process: the app's own links can carry anything, a sign-in token included.
      */
-    test('is not held against a checkout it reaches later', () async {
+    test('is refused when it is delivered again to the next checkout',
+        () async {
       final watcher = ReturnLinkWatcher(source: links.source);
       final late = returnLink('success=1&invoice_id=INV-LATE');
 
@@ -137,6 +138,29 @@ void main() {
 
       links.emit(late);
       await flush();
+
+      final matched = <String>[];
+      final watching = watcher.watch(testReturnUrl, matched.add);
+
+      await flush();
+      links.emit(late);
+      await flush();
+
+      expect(matched, isEmpty);
+      watching.stop();
+    });
+
+    test('is let go of after ten minutes', () async {
+      var now = DateTime(2026, 11, 26, 12);
+      final watcher = ReturnLinkWatcher(source: links.source, now: () => now);
+      final late = returnLink('success=1&invoice_id=INV-LATE');
+
+      await watcher.prime();
+      await flush();
+
+      links.emit(late);
+      await flush();
+      now = now.add(const Duration(minutes: 10));
 
       final matched = <String>[];
       final watching = watcher.watch(testReturnUrl, matched.add);
@@ -169,7 +193,7 @@ void main() {
   });
 
   group('the deep-link watcher', () {
-    test('reports a repeated link once per checkout, not once per process',
+    test('never settles the next checkout with the link that settled one',
         () async {
       final watcher = ReturnLinkWatcher(source: links.source);
       final url = returnLink('success=1&invoice_id=INV-REAL');
@@ -192,7 +216,11 @@ void main() {
       secondWatch.stop();
 
       expect(first, hasLength(1));
-      expect(second, hasLength(1));
+      expect(
+        second,
+        isEmpty,
+        reason: 'that link belongs to a payment that is over',
+      );
     });
 
     test('ignores a link that is not the return link', () async {

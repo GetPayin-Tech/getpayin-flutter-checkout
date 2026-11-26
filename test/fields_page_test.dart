@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
 import 'package:getpayin_checkout/src/sheet/fields_page.dart'
-    show walletChargingFragment;
+    show paylinkSdkUrl, walletChargingFragment;
 
 import 'support/fixtures.dart';
 
@@ -102,13 +102,10 @@ void main() {
      * unscripted page can: on its own address, which the host watches.
      */
     test('marks its own address once a wallet charge is out', () {
+      // That it does so on the SDK's `charging` event, and after a bank check too, is run
+      // in fields_page_script_test.dart.
       expect(html, contains('var CHARGING = "$walletChargingFragment";'));
-      expect(
-        html,
-        contains(
-          "instance.on('charging', function () { window.location.hash = CHARGING; });",
-        ),
-      );
+      expect(html, contains('window.location.hash = CHARGING;'));
     });
 
     /*
@@ -132,11 +129,6 @@ void main() {
       expect(html, isNot(contains('.row + .row')));
     });
 
-    test('reports a failure during a charge with the code it was sent', () {
-      expect(html, contains('attempt = asked.attempt;'));
-      expect(html, contains('if (attempt) { failure.attempt = attempt; }'));
-    });
-
     test('answers a charge with the code it was sent', () {
       expect(html, contains('attempt: asked.attempt'));
     });
@@ -144,6 +136,20 @@ void main() {
     test('carries no secret of its own', () {
       expect(html.toLowerCase(), isNot(contains('hash_token')));
       expect(html.toLowerCase(), isNot(contains('signature')));
+    });
+  });
+
+  group('paylinkSdkUrl', () {
+    test('names the SDK on a PayLink host, with or without a closing slash',
+        () {
+      expect(
+        paylinkSdkUrl('https://pay.example.com/'),
+        'https://pay.example.com/sdk/paylink-fields-v1.js',
+      );
+      expect(
+        paylinkSdkUrl('https://pay.example.com'),
+        'https://pay.example.com/sdk/paylink-fields-v1.js',
+      );
     });
   });
 

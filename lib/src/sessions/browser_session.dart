@@ -1,9 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/deferred.dart';
-import '../core/invoice_id.dart';
 import '../core/messages.dart';
 import '../core/return_url.dart';
 import '../errors.dart';
@@ -109,7 +109,13 @@ Future<CheckoutResult> runBrowserCheckout(
   late CheckoutWatcher linkWatcher;
 
   void onLink(String url) {
-    if (!_answers(url, options.expectedInvoiceId)) {
+    if (!returnLinkAnswers(url, expectedInvoiceId: options.expectedInvoiceId)) {
+      if (kDebugMode) {
+        debugPrint(
+          'GetPayIn: passed over a return link that names another invoice, or none',
+        );
+      }
+
       passedOver = true;
       linkWatcher.stop();
       linkWatcher = phone.watchReturnLink(options.returnUrl, onLink);
@@ -146,23 +152,6 @@ Future<CheckoutResult> runBrowserCheckout(
     await _ignoringFailure(phone.closeSheet);
   }
 }
-
-/// Whether a return link can be this checkout's answer.
-///
-/// The browser sheet hears every link the app is opened with, and a late link from an
-/// earlier checkout, or a made-up one, reaches it exactly as this checkout's own does. Bound
-/// to an invoice, a link naming another invoice, or none, is not this checkout answering:
-/// taken, it would end the checkout the payer is still in with a decline or `wrongInvoice`
-/// while the real payment may yet finish. The sheet goes on waiting for its own.
-///
-/// The invoice is read even from a link whose result cannot be: a server that cannot say
-/// how the charge ended still names the invoice, and that link is this checkout's answer.
-bool _answers(String url, Object? expectedInvoiceId) =>
-    expectedInvoiceId == null ||
-    invoiceIdMatches(
-      expected: expectedInvoiceId,
-      reported: readReturnInvoiceId(url),
-    );
 
 /// The result for a sheet that closed with no answer after it had passed over a link.
 ///

@@ -38,15 +38,16 @@ So `CheckoutStatus.paid` means "the link said so", not "the money moved".
    reaches the app with no checkout waiting for one. So the link your app was opened with
    cannot become the result of the next payment the payer starts, and neither can the link
    that settled the payment before it. Both are links the plugin can still hand back after
-   the fact, which is why the rule lives here rather than in it.
-3. **`expectedInvoiceId` binds the link to the checkout.** With it set, a paid link naming a
-   different invoice, or naming none at all, is reported as `notPaid`. The browser sheet,
-   which hears every link the app is opened with, goes further: it passes over a link of
-   either kind and goes on waiting for its own, so a late link from another checkout is
-   never read as this one's result. On Android such a link still brings your app to the
-   front, and the payer may still be paying in the browser behind it, so a sheet that then
-   closes with no answer of its own settles `notPaid` with `outcomeUnknown`, never
-   `cancelled`. A link that names the invoice is read as this checkout's answer, and a
+   the fact, which is why the rule lives here rather than in it. A dropped link, and one
+   that settled a checkout, is refused for ten minutes after: long enough for any second
+   delivery, and no longer, because your app's own links can carry anything.
+3. **`expectedInvoiceId` binds the link to the checkout.** With it set, every checkout (the
+   browser sheet, the in-app screen and the payment sheet's wallet button) passes over a
+   link that names a different invoice, or none at all, and goes on waiting for its own, so
+   a late link from another checkout is never read as this one's result, paid or not. The
+   payer may still be paying when it arrives (on Android such a link also brings your app
+   to the front, over the browser), so a checkout that then closes with no answer of its
+   own settles `notPaid` with `outcomeUnknown`, never `cancelled`. A link that names the invoice is read as this checkout's answer, and a
    `paid` in it is still a claim for the `invoice.paid` webhook to confirm. **Pass it
    whenever you have it.** Without it the package has nothing to tie the
    link to.
@@ -174,6 +175,12 @@ pay. Only your registered origin may hold
 the box's top frame; a frame inside it may still load, because that is how all three are
 rendered.
 
+**The wallet button's page stays on your page or PayLink's.** It is the page the sheet takes
+the wallet's return link from, so its top frame may hold your registered origin, PayLink's
+own pages (a "Mobile App" integration's return link forwards the payer through one) and the
+return link, and nothing else. Frames inside it load as they need to. A page sent elsewhere
+before it has loaded takes the wallet away, rather than leave an empty row.
+
 ## Saving a card
 
 A vaulted card's token never travels through the app. The app-return bridge builds exactly
@@ -196,7 +203,7 @@ The link is read by exact field name (`success`, `invoice_id`, `invoice_status`,
 and the values are taken as sent. A link is refused outright when it repeats any field,
 carries a name only a looser reader would take for one of those four (`Success`,
 `invoiceId`, `%73uccess`), or carries a name with a bracket or a control character in it,
-which PHP reads its own way (`invoice[id` as `invoice_id`, `success%00` as `success`).
+which a server may read as one of those four.
 
 That keeps this reader and a server checking the link's `signature` from ever reading
 different values out of one link. A reader that folded case or took the first copy of a field

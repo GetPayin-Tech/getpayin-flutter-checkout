@@ -134,7 +134,7 @@ neither is tied to a live checkout:
 So the watcher keeps one subscription for the whole process, opened by `prime()` as the
 provider mounts; reads the initial link once, there; and tells a checkout only about links
 that arrive while it is watching. A link that arrives with nothing waiting for it is dropped,
-and refused if it turns up again.
+and refused if it turns up again within ten minutes, as is a link that settled a checkout.
 
 Getting this wrong is not a style question: it is how a link that belongs to nothing becomes
 the next checkout's `paid`.

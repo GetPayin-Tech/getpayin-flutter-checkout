@@ -55,6 +55,7 @@ class GetPayInCheckoutView extends StatefulWidget {
     this.linkErrorMessage,
     this.onLoadError,
     this.onPageLoaded,
+    this.onPassedOver,
     super.key,
   });
 
@@ -92,6 +93,14 @@ class GetPayInCheckoutView extends StatefulWidget {
   /// confirm, never as cancelled. A failed page can finish loading too, so read this
   /// against the failure as it arrives rather than when the payer closes.
   final VoidCallback? onPageLoaded;
+
+  /// Called when the page went to a return link that names another invoice, or none.
+  ///
+  /// Only with [expectedInvoiceId] set. That link is not this checkout's answer, so the view
+  /// stops it and goes on; but the real payment may still be running, so a screen of your
+  /// own closed after it should report the payment as one nobody can confirm, never as
+  /// cancelled.
+  final VoidCallback? onPassedOver;
 
   @override
   State<GetPayInCheckoutView> createState() => _GetPayInCheckoutViewState();
@@ -136,6 +145,15 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
       widget.expectedInvoiceId,
     );
     final settings = buildCheckoutWebViewSettings(currentPlatformName());
+    final controller = WebViewController();
+
+    /*
+     * Every event is tied to the web view that raised it. The one a new checkout replaced
+     * goes on running for a moment, and its page can still navigate, finish or fail: through
+     * the view's current state, a return link from it would end the new checkout with the
+     * old one's answer. Its navigations are stopped, and the rest is dropped.
+     */
+    bool current() => identical(controller, _controller);
 
     _loading = true;
     _pageUri = source.uri;
@@ -145,8 +163,9 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
       ownSchemes: resolveOwnSchemes(widget.ownSchemes),
       onComplete: (result) => widget.onComplete(result),
       onExternal: _handToPhone,
+      onPassedOver: () => widget.onPassedOver?.call(),
     );
-    _controller = WebViewController()
+    _controller = controller
       ..setJavaScriptMode(
         settings.javaScriptEnabled
             ? JavaScriptMode.unrestricted
@@ -155,23 +174,39 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
       ..setBackgroundColor(CheckoutStyle.background)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onNavigationRequest: _onNavigationRequest,
-          onPageStarted: (url) => _pageUri = url,
-          onPageFinished: (_) {
-            _stopLoading();
-            widget.onPageLoaded?.call();
+          onNavigationRequest: (request) => current()
+              ? _onNavigationRequest(request)
+              : NavigationDecision.prevent,
+          onPageStarted: (url) {
+            if (current()) {
+              _pageUri = url;
+            }
           },
-          onWebResourceError: _onWebResourceError,
-          onHttpError: _onHttpError,
+          onPageFinished: (_) {
+            if (current()) {
+              _stopLoading();
+              widget.onPageLoaded?.call();
+            }
+          },
+          onWebResourceError: (error) {
+            if (current()) {
+              _onWebResourceError(error);
+            }
+          },
+          onHttpError: (error) {
+            if (current()) {
+              _onHttpError(error);
+            }
+          },
         ),
       );
 
-    unawaited(_load(_controller, settings, source.uri));
+    unawaited(_load(controller, settings, source.uri));
 
     final error = source.error;
 
     if (error != null) {
-      _reportLoadFailureAfterBuild(error);
+      _reportLoadFailureAfterBuild(controller, error);
     }
   }
 
@@ -190,7 +225,9 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
     try {
       await controller.loadRequest(Uri.parse(uri));
     } catch (cause) {
-      _reportLoadFailure('$cause');
+      if (identical(controller, _controller)) {
+        _reportLoadFailure('$cause');
+      }
     }
   }
 
@@ -213,7 +250,10 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
     final status = error.response?.statusCode;
 
     if (isPageHttpFailure(
-        failedUri: error.request?.uri.toString(), pageUri: _pageUri)) {
+      failedUri: error.request?.uri.toString(),
+      pageUri: _pageUri,
+      beforeFirstPage: _loading,
+    )) {
       _reportLoadFailure('The checkout page answered HTTP $status.');
     }
   }
@@ -233,10 +273,22 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
     );
     final target = intent == null ? url : intent.app;
     final fallback = intent?.web;
+    final controller = _controller;
 
+    /*
+     * The phone answers later. By then the app may have swapped in another checkout, or
+     * taken this one away, and this bank's page belongs to neither: it is loaded only into
+     * the checkout it came from, while that one is still on screen.
+     */
     void unopened() {
+      if (!mounted || !identical(controller, _controller)) {
+        return;
+      }
+
       if (fallback != null) {
-        unawaited(_controller.loadRequest(Uri.parse(fallback)));
+        unawaited(
+          controller.loadRequest(Uri.parse(fallback)).catchError((Object _) {}),
+        );
 
         return;
       }
@@ -266,10 +318,12 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
   /// Reports a failure found while starting the checkout, once the frame is done.
   ///
   /// The cause is known during `initState`, where telling the parent straight away would
-  /// rebuild a widget that is still building.
-  void _reportLoadFailureAfterBuild(String detail) {
+  /// rebuild a widget that is still building. Only for the checkout of [controller]: one
+  /// that a new checkout replaced within the frame has nothing left to report.
+  void _reportLoadFailureAfterBuild(
+      WebViewController controller, String detail) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
+      if (mounted && identical(controller, _controller)) {
         _reportLoadFailure(detail);
       }
     });

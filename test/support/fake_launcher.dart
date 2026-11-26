@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:url_launcher_platform_interface/link.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
@@ -29,6 +31,9 @@ class FakeUrlLauncher extends UrlLauncherPlatform {
   /// What a launch answers. False is "nothing on this phone can open it".
   bool opens = true;
 
+  /// Set to have a launch answer only when the test completes it, as a slow phone does.
+  Completer<bool>? answer;
+
   /// Unused: the package launches links itself rather than through a Link widget.
   @override
   LinkDelegate? get linkDelegate => null;
@@ -44,7 +49,7 @@ class FakeUrlLauncher extends UrlLauncherPlatform {
   Future<bool> launchUrl(String url, LaunchOptions options) async {
     launches.add((url, options.mode));
 
-    return opens;
+    return answer?.future ?? opens;
   }
 
   @override

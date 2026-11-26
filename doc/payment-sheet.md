@@ -16,7 +16,7 @@ it needs no origin, no page to host and no extra PCI scope.
 | Saved cards and the card list       | Flutter, from your own backend                      |
 | Card number and security code       | CyberSource, in iframes on a page you host          |
 | The wallet button                   | PayLink, on an unscripted surface inside the sheet  |
-| The 3-D Secure challenge            | PayLink's SDK, framed by it, over the sheet         |
+| The 3-D Secure challenge            | PayLink's SDK, in the card box or the wallet page   |
 
 The card number and security code cannot be Flutter text fields: they have to be rendered by
 the gateway, which is what keeps the card out of your app. So the card box is a small web
@@ -74,6 +74,12 @@ checks it for you and reports `origin_not_allowed` rather than showing you an em
 it keeps checking afterwards: the card box loads your page and no other, whatever the page
 asks for next. What the page frames — the card fields, and the issuer's 3-D Secure step — is
 unaffected.
+
+Host the page from the same release as the package. The sheet hands the page a key when it
+starts it, and takes only messages that carry that key back: anything the page frames can post
+to the sheet, and only the page was handed the key. A page from an older release sends no key.
+The sheet notices from its first message, before the payer can pay, and reports
+`page_outdated`, which sends the payer to the hosted checkout like the failures below.
 
 An origin that will not serve the page to a plain request — a development tunnel with an
 interstitial, a staging host behind a gate — takes `fieldsPageHeaders`, which is sent with
@@ -142,7 +148,10 @@ if (result.status == CheckoutStatus.paid) {
 ```
 
 `expectedInvoiceId` can be left out: the sheet then holds results to the invoice the session
-names, which is the same one.
+names, which is the same one. A session whose `invoice_id` cannot be read holds them to none. A
+value you pass that is not an invoice id makes `show()` throw a `GetPayInConfigError` before
+the sheet opens, and so does a `returnUrl` with no scheme or a session whose `checkout_url` is
+not a web link: the payer would meet either only after paying.
 
 `result` is the same `CheckoutResult` the hosted checkout returns, read by the same rules:
 only `PAID` is paid, and a charge booked against another invoice is refused. It is still a
@@ -285,8 +294,8 @@ picked, and your server is the only thing that can charge it. So saved cards wor
    that one checkout. Pass the `202`'s `invoice_id` as `expectedInvoiceId`: the challenge
    answers on a return link, and that is what ties the link to this charge. The return link
    your server sends at the end of the challenge carries that same `invoice_id`, even when
-   it cannot say how the charge ended: bound to it, the browser sheet on Android waits past
-   a link that names another invoice, or none. The example
+   it cannot say how the charge ended: bound to it, the checkout waits past a link that
+   names another invoice, or none. The example
    app does exactly this. A payer who closes the challenge may have answered the issuer
    first, so a `cancelled` from it is reported as `CheckoutResultCode.outcomeUnknown`.
 8. A server error from your own server after the charge left is not a decline: return
@@ -297,12 +306,13 @@ picked, and your server is the only thing that can charge it. So saved cards wor
 
 These failures mean the payer cannot pay here at all: `fields_unavailable`,
 `fields_unsupported`, `session_invalid`, `origin_not_allowed`, `integration_inactive`,
-`payment_not_found`, `library_unavailable`, `payments_paused`, `not_payable`, `expired`, and
-any code this package does not know. The sheet closes and sends the payer to `checkout_url`
+`payment_not_found`, `library_unavailable`, `payments_paused`, `not_payable`, `expired`,
+`page_outdated`, and any code this package does not know. The sheet closes and sends the payer to `checkout_url`
 instead, which is the behaviour you want and why `fallBackToHostedCheckout` defaults to on.
 The hosted checkout needs no origin and no page, so it always works, and for a payment that
 is over it says why in PayLink's own words. A page sent away from your origin before its
-fields are live counts as `origin_not_allowed`. The card form loads while the payer is still
+fields are live counts as `origin_not_allowed`, and a page that does not load, or answers with
+an HTTP error, is handed over the same way. The card form loads while the payer is still
 on the first screen, so one of these can arrive while a wallet or saved-card payment is in
 flight: the sheet then waits for that payment to end, and hands over only if it ended without
 a payment. After a wallet the payer opened that never answered, it settles
@@ -315,7 +325,9 @@ declined, so do not show the payer a decline.
 `already_paid` is the exception. PayLink sends it the moment the fields open on an invoice
 that is paid, which may be this payer's own payment from a minute ago, so the sheet never
 sends them to pay again: it settles with `CheckoutResultCode.outcomeUnknown`, with the
-fallback on or off. Read the invoice on your server.
+fallback on or off. Read the invoice on your server. While a wallet or saved-card payment is in
+flight, the sheet waits for that payment's own answer first, because that payment may be what
+paid the invoice.
 
 Everything else — a declined card, a failed or abandoned 3-D Secure, a bad expiry — keeps the
 sheet open with the reason, and the payer can try again on the same form. PayLink's SDK asks
@@ -363,7 +375,17 @@ leaves has not cancelled anything; report the payment as one nobody can confirm.
 `onComplete` nor `onCharging` again. When its page marked its charge just before,
 `onChargingAfterLeaving` says so. That charge is out with no answer to come, even with a new
 surface in its place, so report the payment as one nobody can confirm then too. It can run
-after your own widget is gone, so check `mounted` in it.
+after your own widget is gone, so check `mounted` in it. `onUnavailable` says the page cannot
+show the wallet at all: it did not load, it refused the SDK address it was sent, it could not
+start, or this phone has no such wallet. It never comes after the wallet's charge is marked,
+so nothing was charged through it: take the surface away.
+
+A wallet payment can get the issuer's 3-D Secure check too, when your company runs 3-D
+Secure and has not set that wallet to skip it. The SDK draws the check over the whole wallet
+page, so `WalletSurface.onChallenge` says `true` when it is up: give the same surface the
+card check's height by its `height`, and hold the sheet as for a charge. It says `false`
+when the check has gone with no charge; a check that is passed is followed by `onCharging`.
+Never swap the surface for a new one meanwhile, because a new one loads a new page.
 
 ## The upstream contract
 

@@ -1,11 +1,15 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../core/return_url.dart';
+import '../core/url.dart';
 import '../platform.dart';
 import '../types.dart';
 import '../webview/app_schemes.dart';
+import '../webview/load_failure.dart';
 import '../webview/navigation_handler.dart';
 import '../webview/platform_settings.dart';
 import '../webview/wallet_settings.dart';
@@ -31,6 +35,8 @@ class WalletSurface extends StatefulWidget {
     required this.onComplete,
     this.onCharging,
     this.onChargingAfterLeaving,
+    this.onUnavailable,
+    this.onChallenge,
     this.pageHeaders = const <String, String>{},
     this.expectedInvoiceId,
     this.ownSchemes = const <String>[],
@@ -84,6 +90,26 @@ class WalletSurface extends StatefulWidget {
   /// has gone, so check `mounted` before calling `setState`.
   final VoidCallback? onChargingAfterLeaving;
 
+  /// Called once, when the page says it cannot show the wallet.
+  ///
+  /// The page did not load or has gone, was sent to another website before it loaded,
+  /// refused the SDK address it was sent, could not start, or the wallet is not available
+  /// on this phone. Never called after the page marked
+  /// its charge, so nothing was charged through it. Take the surface away: left in place, it
+  /// is an empty row where a wallet should be.
+  final VoidCallback? onUnavailable;
+
+  /// Called with true when the page shows the issuer's 3-D Secure check, and with false when
+  /// the check has gone with no charge.
+  ///
+  /// PayLink's SDK draws the check over the whole page, so give the surface the room the
+  /// card's check gets, by [height], until this says false or [onCharging] is called: a
+  /// check that is passed is followed by the charge. Keep the same surface on screen
+  /// meanwhile, because a new one loads a new page and the check is lost. The payer is part
+  /// way through a payment while it is up, so hold the host still as for a charge. Only
+  /// while the surface is on screen and before its charge is marked.
+  final ValueChanged<bool>? onChallenge;
+
   /// How tall the button is drawn.
   final double height;
 
@@ -91,13 +117,25 @@ class WalletSurface extends StatefulWidget {
   State<WalletSurface> createState() => _WalletSurfaceState();
 }
 
+/// Schemes a web view loads as a page that has no web address of its own.
+const Set<String> _pagesWithNoAddress = <String>{
+  'about',
+  'data',
+  'blob',
+  'file'
+};
+
 class _WalletSurfaceState extends State<WalletSurface> {
   late final CheckoutNavigationHandler _handler = CheckoutNavigationHandler(
     returnUrl: widget.returnUrl,
     expectedInvoiceId: widget.expectedInvoiceId,
     ownSchemes: resolveOwnSchemes(widget.ownSchemes),
     onComplete: (result) => widget.onComplete(result),
-    onExternal: (_) {},
+    onExternal: (url) {
+      if (kDebugMode) {
+        debugPrint('GetPayIn wallet: refused a link to ${linkForLog(url)}');
+      }
+    },
   );
 
   late final WebViewController _webView = WebViewController()
@@ -107,11 +145,49 @@ class _WalletSurfaceState extends State<WalletSurface> {
       NavigationDelegate(
         onNavigationRequest: _onNavigationRequest,
         onUrlChange: (change) => _noticeCharging(change.url),
+        onWebResourceError: (error) {
+          if (isMainFrameFailure(error.isForMainFrame) &&
+              !isInterruptedLoad(error.errorCode)) {
+            _unavailable();
+          }
+        },
+        onPageFinished: (_) => _pageUp = true,
+        onHttpError: (error) {
+          if (isPageHttpFailure(
+            failedUri: error.request?.uri.toString(),
+            pageUri: widget.pageUrl,
+            beforeFirstPage: !_pageUp,
+          )) {
+            _unavailable();
+          }
+        },
       ),
     );
 
+  /// Tells the host the wallet cannot be shown, once, while nothing has been charged.
+  ///
+  /// The page says so on its address when it cannot start the wallet. A page that never
+  /// loaded cannot say anything, so a load that fails says it for the page.
+  void _unavailable() {
+    if (_stopped || _chargingNoticed || _unavailableNoticed) {
+      return;
+    }
+
+    _unavailableNoticed = true;
+    widget.onUnavailable?.call();
+  }
+
   /// True once the host has been told the wallet's charge is out.
   bool _chargingNoticed = false;
+
+  /// True once the host has been told the page cannot show the wallet.
+  bool _unavailableNoticed = false;
+
+  /// True while the host has been told the issuer's check is up.
+  bool _challengeNoticed = false;
+
+  /// True once the wallet's page has finished loading for the first time.
+  bool _pageUp = false;
 
   /// True once the surface has left the screen, after which it passes on only the page's
   /// mark that its charge is out.
@@ -157,27 +233,41 @@ class _WalletSurfaceState extends State<WalletSurface> {
   /// A surface that left the screen while the switch was being set loads nothing: Android
   /// never asks the navigation delegate about a page the app loads itself, so the page would
   /// otherwise come up behind the blank one, holding the payment's token.
+  ///
+  /// A surface that cannot be set up or loaded tells the host it is unavailable, rather
+  /// than leaving an empty row behind.
   Future<void> _load() async {
-    await walletSettingsApplier(
-      _webView,
-      buildCheckoutWebViewSettings(currentPlatformName()),
-    );
+    try {
+      await walletSettingsApplier(
+        _webView,
+        buildCheckoutWebViewSettings(currentPlatformName()),
+      );
 
-    if (_stopped) {
-      return;
-    }
+      if (_stopped) {
+        return;
+      }
 
-    await _webView.loadRequest(
-      Uri.parse(
-        walletPageUrl(
-          pageUrl: widget.pageUrl,
-          clientToken: widget.session.clientToken,
-          wallets: <String>[widget.wallet.wireName],
-          sdkUrl: widget.session.sdkUrl,
+      await _webView.loadRequest(
+        Uri.parse(
+          walletPageUrl(
+            pageUrl: widget.pageUrl,
+            clientToken: widget.session.clientToken,
+            wallets: <String>[widget.wallet.wireName],
+            sdkUrl: widget.session.sdkUrl,
+          ),
         ),
-      ),
-      headers: widget.pageHeaders,
-    );
+        headers: widget.pageHeaders,
+      );
+    } catch (cause) {
+      // The kind of failure only: its text can carry the page's address, and the address
+      // carries the payment's client token.
+      if (kDebugMode) {
+        debugPrint(
+            'GetPayIn wallet: could not load its page (${cause.runtimeType})');
+      }
+
+      _unavailable();
+    }
   }
 
   /// Passes the page's mark that its charge is out on to the host, once.
@@ -186,15 +276,85 @@ class _WalletSurfaceState extends State<WalletSurface> {
   /// differently: iOS asks the navigation delegate, Android only reports the new address.
   /// Passed on after the surface has left the screen too, to the host's other callback: the
   /// page may have marked its charge just before it was emptied, and that charge is out.
+  ///
+  /// The page's marks that it cannot show the wallet, and that the issuer's check is up or
+  /// has gone, are read the same way, and passed on only while the surface is on screen and
+  /// no charge has been marked.
   void _noticeCharging(String? url) {
     final fragment = url == null ? null : Uri.tryParse(url)?.fragment;
+
+    if (fragment == walletUnavailableFragment) {
+      _unavailable();
+
+      return;
+    }
+
+    if (fragment == walletChallengeFragment ||
+        fragment == walletChallengeEndedFragment) {
+      _challenge(showing: fragment == walletChallengeFragment);
+
+      return;
+    }
 
     if (_chargingNoticed || fragment != walletChargingFragment) {
       return;
     }
 
     _chargingNoticed = true;
+    _challengeNoticed = false;
     (_stopped ? _onChargingAfterLeaving : widget.onCharging)?.call();
+  }
+
+  /// Tells the host the issuer's check is up, or has gone with no charge, once per change.
+  ///
+  /// Both platforms can report the same mark twice: iOS as a navigation, Android as a new
+  /// address.
+  void _challenge({required bool showing}) {
+    if (_stopped || _chargingNoticed || _challengeNoticed == showing) {
+      return;
+    }
+
+    _challengeNoticed = showing;
+    widget.onChallenge?.call(showing);
+  }
+
+  /// Whether [url] may hold the top of the wallet's page: a web page only if it is the
+  /// shop's own or PayLink's.
+  ///
+  /// This page is the one the sheet takes the wallet's return link from, so a page it is
+  /// sent to could hand back a "paid" for this invoice. The shop's page is the wallet's own,
+  /// on the origin the integration registered. PayLink's is where a "Mobile App"
+  /// integration's return link goes first, a page that forwards the payer to the app's
+  /// link; any other integration's return link is the shop's own address. Anything that is
+  /// not a web page — the return link, a bank's app — is the navigation handler's to judge,
+  /// and so is a web return link. A page with no address of its own (`about:`, `data:`,
+  /// `blob:`, `file:`) is none of the three, so it is refused, as the card box refuses it;
+  /// the blank page that ends a surface that left is let through before this is asked.
+  /// Frames are never judged here: the wallet and the bank draw their own steps in them.
+  bool _mayHoldTopFrame(String url) {
+    final scheme = parseUrl(url)?.scheme;
+
+    if (_pagesWithNoAddress.contains(scheme)) {
+      return false;
+    }
+
+    if ((scheme != 'http' && scheme != 'https') ||
+        matchesReturnUrl(url, widget.returnUrl)) {
+      return true;
+    }
+
+    return widget.session.servesFrom(url) || _isPayLinks(url);
+  }
+
+  /// Whether [url] is served from the PayLink the payment's checkout is on.
+  bool _isPayLinks(String url) {
+    final page = parseUrl(url);
+    final payLink = parseUrl(widget.session.checkoutUrl);
+
+    return page != null &&
+        payLink != null &&
+        page.scheme == payLink.scheme &&
+        page.authority == payLink.authority;
   }
 
   NavigationDecision _onNavigationRequest(NavigationRequest request) {
@@ -210,6 +370,20 @@ class _WalletSurfaceState extends State<WalletSurface> {
 
     if (request.isMainFrame) {
       _noticeCharging(request.url);
+
+      if (!_mayHoldTopFrame(request.url)) {
+        if (kDebugMode) {
+          debugPrint(
+            'GetPayIn wallet: refused to let its page go to ${linkForLog(request.url)}',
+          );
+        }
+
+        if (!_pageUp) {
+          _unavailable();
+        }
+
+        return NavigationDecision.prevent;
+      }
     }
 
     final allowed = _handler(

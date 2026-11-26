@@ -1,5 +1,9 @@
+import 'package:flutter/foundation.dart'
+    show VoidCallback, debugPrint, kDebugMode;
+
 import '../core/navigation.dart';
 import '../core/return_url.dart';
+import '../core/url.dart';
 import '../types.dart';
 
 /// One navigation request, as `webview_flutter` reports it to the navigation delegate.
@@ -31,6 +35,11 @@ class NavigationRequestInfo {
 /// second result for one checkout would be reported as a second payment. One handler
 /// belongs to one checkout, so a view that starts a new checkout builds a new handler and
 /// one that merely rebuilt keeps the old one.
+///
+/// Bound to an invoice, it passes over a return link that names another invoice, or none:
+/// that is not this checkout answering, and a "not paid" in it would end the checkout while
+/// the real payment may yet go through. It stops the navigation, tells [onPassedOver], and
+/// goes on waiting for its own.
 class CheckoutNavigationHandler {
   /// Creates the handler for one checkout.
   CheckoutNavigationHandler({
@@ -39,6 +48,7 @@ class CheckoutNavigationHandler {
     required this.onExternal,
     this.expectedInvoiceId,
     this.ownSchemes = const <String>[],
+    this.onPassedOver,
   });
 
   /// The link that ends this checkout.
@@ -46,6 +56,13 @@ class CheckoutNavigationHandler {
 
   /// The invoice this checkout is bound to, if any.
   final Object? expectedInvoiceId;
+
+  /// Called each time a return link that names another invoice, or none, is passed over.
+  ///
+  /// The real payment may still be running when it is, so a checkout that then ends with no
+  /// answer of its own is one nobody can confirm: report it as
+  /// [CheckoutResultCode.outcomeUnknown], never as cancelled.
+  final VoidCallback? onPassedOver;
 
   /// Every other scheme the host app answers to; refused like the return link's scheme.
   final List<String> ownSchemes;
@@ -73,10 +90,24 @@ class CheckoutNavigationHandler {
     );
 
     if (verdict == NavigationVerdict.endCheckout) {
-      if (!_completed) {
+      if (!_completed &&
+          !returnLinkAnswers(request.url,
+              expectedInvoiceId: expectedInvoiceId)) {
+        if (kDebugMode) {
+          debugPrint(
+            'GetPayIn: passed over a return link that names another invoice, or none',
+          );
+        }
+
+        onPassedOver?.call();
+      } else if (!_completed) {
         _completed = true;
         onComplete(
             resolveReturn(request.url, expectedInvoiceId: expectedInvoiceId));
+      } else if (kDebugMode) {
+        debugPrint(
+          'GetPayIn: dropped a second return link; the checkout had already ended',
+        );
       }
 
       return false;
@@ -86,6 +117,15 @@ class CheckoutNavigationHandler {
       onExternal(request.url);
 
       return false;
+    }
+
+    // In a debug build only, and without what followed the address: a bank's link can carry
+    // its own one-time values, and a release build's log is read by whoever reads the phone's.
+    if (verdict == NavigationVerdict.block && kDebugMode) {
+      debugPrint(
+        'GetPayIn: refused a ${request.isTopFrame ? 'page' : 'frame'} link to '
+        '${linkForLog(request.url)}',
+      );
     }
 
     return verdict == NavigationVerdict.load;
