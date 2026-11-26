@@ -119,11 +119,17 @@ answered. Without those fields the issuer is never asked and the charge simply g
 on the strength of the card having been authenticated when it was vaulted -- which is the
 documented default, not a fault.
 
-It also sends `authentication_challenge: "mandate"`, which asks the issuer for a passcode
-rather than leaving the choice to them. Left out, the enrollment states no preference,
-CyberSource applies its own default, and an issuer with a card it recognises almost always
-passes the payer through without asking anything -- so the step-up is never seen and never
-tested. The issuer may still decline to challenge: it is a request, not a switch.
+Set `GETPAYIN_REQUEST_3DS_CHALLENGE=1` in `dev.env` and the charge also carries
+`authentication_challenge: "mandate"`, which asks the issuer for a passcode rather than
+leaving the choice to them. Left out, the enrollment states no preference, CyberSource
+applies its own default, and an issuer with a card it recognises almost always passes the
+payer through without asking anything -- so the step-up is never seen and never tested. The
+issuer may still decline to challenge: it is a request, not a switch.
+
+It is opt-in because the signature covers every field sent. A PayLink that does not know
+this field drops it before signing, the two strings disagree, and **every token charge comes
+back `422 Invalid signature`** -- so turn it on only once the backend that reads it is
+deployed.
 
 The challenge runs over the tunnel rather than this server's LAN address. A bank's page is
 HTTPS and posts its answer back to the return URL, and no browser will carry that answer

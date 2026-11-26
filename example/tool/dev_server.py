@@ -351,11 +351,17 @@ def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
         charge["authentication_return_url"] = f"{public_base}/3ds/{reference}/return"
         charge["authentication_reference_id"] = setup["data"]["reference_id"]
 
-        # A harness exists to exercise the step-up, so it asks for one. Without this the
-        # enrollment states no preference, CyberSource defaults to "01", and the issuer
-        # takes the cheap answer: a frictionless pass, and a challenge nobody can try. The
-        # issuer may still refuse to challenge -- this is a request, not a switch.
-        charge["authentication_challenge"] = "mandate"
+        # Asked for only when the environment says PayLink understands the field, because
+        # the signature covers every field sent: against a PayLink that does not validate
+        # this one, it is dropped before PayLink signs and every charge comes back 422
+        # "Invalid signature". Opt in with GETPAYIN_REQUEST_3DS_CHALLENGE=1 once the
+        # backend that reads it is deployed.
+        #
+        # What it buys: without it the enrollment states no preference, CyberSource
+        # defaults to "01", and the issuer takes the cheap answer -- a frictionless pass,
+        # and a step-up nobody can try. The issuer may still refuse: it is a request.
+        if config.get("GETPAYIN_REQUEST_3DS_CHALLENGE") == "1":
+            charge["authentication_challenge"] = "mandate"
 
     status, answer = call_tokens("tokens/charge", charge, config)
 
