@@ -256,12 +256,16 @@ says how they fit together.
 | `FieldsError.attempt`            | The same code on a failure; while a charge runs, the box takes only a failure that carries it.                                                      |
 | `payCommand({..., attempt})`     | The script that charges the card, carrying that code.                                                                                               |
 | `FieldsFailure`                  | Why the fields could not take the payment. `sendsPayerToHostedCheckout` says which ones hand the payer over.                                        |
-| `WalletSurface`                  | The wallet button. `onCharging` says its charge is out; `onChargingAfterLeaving`, the same after it left; `onUnavailable`, that it cannot be shown; `onChallenge`, that the issuer's check is up or has gone. |
+| `WalletSurface`                  | The wallet button. Its four callbacks are listed below the table.                                                                                   |
 | `PayLinkFieldsSession`           | The payment, as `/init` described it.                                                                                                               |
 
 A `FieldsEvent` is one of `FieldsReady`, `FieldsChanged`, `FieldsAuthenticating`,
 `FieldsCharging`, `FieldsPayment`, `FieldsError`, `FieldsWalletReady` and
 `FieldsWalletError`.
+
+`WalletSurface` reports through four callbacks. `onCharging` says its charge is out;
+`onChargingAfterLeaving`, the same after the button left the screen; `onUnavailable`, that the
+wallet cannot be shown; `onChallenge`, that the issuer's check is up or has gone.
 
 `FieldsFailure` names every code PayLink's fields send about a payment. `alreadyPaid` is fatal
 but never sends the payer to the hosted checkout: the sheet reports it as `outcomeUnknown`.
