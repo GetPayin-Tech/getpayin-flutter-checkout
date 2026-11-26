@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
 import 'package:getpayin_checkout/src/core/session_guard.dart';
 import 'package:getpayin_checkout/src/sessions/deep_link.dart';
+import 'package:getpayin_checkout/src/sheet/sheet_parts.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'support/fake_launcher.dart';
@@ -384,6 +385,22 @@ void main() {
 
     expect(find.text(const PaymentSheetStrings().addNewCard), findsNothing);
     expect(find.text(r'Pay $97.42'), findsNothing);
+
+    final box = tester.getSize(find.byType(CardBox));
+    final sheet = tester.getSize(find.byType(GetPayInPaymentSheet));
+    final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+
+    expect(
+      box.width,
+      sheet.width,
+      reason: 'the issuer formats its page for a window, and every point taken '
+          'off the width is taken off the page',
+    );
+    expect(
+      box.height,
+      greaterThan(screen.height * 0.8),
+      reason: 'a challenge drawn in a short box scrolls the field out of it',
+    );
   });
 
   testWidgets('offers no wallet when none belongs on this phone',

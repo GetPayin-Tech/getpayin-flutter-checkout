@@ -88,6 +88,19 @@ class ExampleApp extends StatelessWidget {
 /// GetPayIn's own green, so the harness looks like the product it is testing.
 const Color brand = Color(0xFF009C95);
 
+/// Body text, and anything a tester reads line by line.
+const Color ink = Color(0xFF42434E);
+
+/// Labels, timestamps, and the half of a line that is not the point of it.
+const Color muted = Color(0xFF6D6E78);
+
+/// Hairlines between rows, where a card would be too much separation.
+const Color hairline = Color(0xFFE6E9EC);
+
+/// What cannot be undone, and what failed. Muted rather than alarming: a declined card is
+/// an ordinary answer, and a screen that shouts at every one of them stops being read.
+const Color danger = Color(0xFFA6392F);
+
 /// The sheet, in the same green.
 ///
 /// The package ships a Stripe-ish blue, which is a sensible default for a package and the
@@ -174,6 +187,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
   /// id back when the payer picks one.
   List<SavedCard> _cards = const <SavedCard>[];
 
+  /// True until the first answer from the server, so the list can be drawn as it will be
+  /// rather than as an empty state that is about to be contradicted.
+  bool _cardsLoading = true;
+
+  /// The token being removed, so that card alone shows it rather than the whole screen.
+  String? _removing;
+
   /// A field that starts on what the last run left in it, and saves what is typed.
   TextEditingController _remembered(String key, String fallback) {
     final controller = TextEditingController(text: _store.text(key, fallback));
@@ -203,10 +223,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
           .toList();
 
       if (mounted) {
-        setState(() => _cards = cards);
+        setState(() {
+          _cards = cards;
+          _cardsLoading = false;
+        });
       }
     } catch (_) {
-      return;
+      if (mounted) {
+        setState(() => _cardsLoading = false);
+      }
     }
   }
 
@@ -232,6 +257,155 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
 
     return CardBrand.unknown;
+  }
+
+  /// Puts the issuer's challenge in a sheet of the app's own, and settles on what it says.
+  ///
+  /// `GetPayInCheckout.open` cannot raise this one: it takes the one-checkout-at-a-time
+  /// guard, and the payment sheet is holding that guard for as long as it is open — so a
+  /// step-up asked for from inside `chargeSavedCard` would be refused as busy, which is
+  /// the rule blocking the second leg of the checkout it belongs to.
+  ///
+  /// `GetPayInCheckoutView` is a widget rather than a session: it claims nothing, reads
+  /// the return link with the same rules the hosted checkout does, and can therefore be
+  /// drawn inside a checkout that is already running. The sheet it sits in is the app's,
+  /// which is why this file owns the chrome and the way out.
+  Future<CheckoutResult> _confirmWithIssuer(
+    String challenge,
+    Object? invoiceId,
+  ) async {
+    final answer = await showModalBottomSheet<CheckoutResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheet) => FractionallySizedBox(
+        heightFactor: 0.94,
+        child: Column(
+          children: <Widget>[
+            _ChallengeBar(onClose: () => Navigator.of(sheet).pop()),
+            Expanded(
+              child: GetPayInCheckoutView(
+                checkoutUrl: challenge,
+                returnUrl: returnUrl,
+                expectedInvoiceId: invoiceId,
+                onComplete: (result) => Navigator.of(sheet).pop(result),
+                onLoadError: (message, detail) =>
+                    _say('challenge could not load: $message'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    _say('challenge ${answer == null ? 'closed' : answer.status.name}');
+
+    return answer ?? _unfinishedChallenge;
+  }
+
+  /// What a challenge the payer walked away from means.
+  ///
+  /// Not cancelled: the charge is with the gateway by the time an issuer asks anything, so
+  /// the one thing this is not is a payment that never happened.
+  static const CheckoutResult _unfinishedChallenge = CheckoutResult(
+    status: CheckoutStatus.notPaid,
+    code: CheckoutResultCode.outcomeUnknown,
+    message:
+        'The bank step was closed before it finished. Read the invoice before '
+        'charging again.',
+  );
+
+  /// Takes a vaulted card out of use, which only the server can do.
+  ///
+  /// A payer removing a saved card is `POST /api/v2/integration/tokens/revoke`, signed
+  /// with the hash token, so it goes the same way a charge does: the app knows four digits
+  /// and an id, and the server knows the token. The list is read again afterwards rather
+  /// than edited here, so what the screen shows is what the server still holds.
+  Future<void> _revokeSaved(SavedCard card) async {
+    if (!await _confirmRemoval(card)) {
+      return;
+    }
+
+    setState(() => _removing = card.id);
+    _say('revoking saved card ${card.last4}');
+
+    try {
+      final answer = await http
+          .post(
+            Uri.parse('${_server.text.trim()}/revoke'),
+            headers: const <String, String>{'Content-Type': 'application/json'},
+            body: jsonEncode(<String, Object?>{
+              'card_token': card.id,
+              if (_baseUrl.text.trim().isNotEmpty)
+                'base_url': _baseUrl.text.trim(),
+              if (_publicToken.text.trim().isNotEmpty)
+                'public_token': _publicToken.text.trim(),
+              if (_hashToken.text.trim().isNotEmpty)
+                'hash_token': _hashToken.text.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      final body = jsonDecode(answer.body) as Map<String, Object?>;
+
+      _say('revoke answered ${answer.statusCode}: '
+          '${body['message'] ?? body['error'] ?? body['success']}');
+    } catch (failure) {
+      _say('revoke failed: $failure');
+    }
+
+    await _loadCards();
+
+    if (mounted) {
+      setState(() => _removing = null);
+    }
+  }
+
+  /// Asks before revoking, because the token does not come back.
+  ///
+  /// A charge can be retried and a checkout can be closed; a revoked card has to be
+  /// entered and vaulted again, and on a test integration that is three screens and a real
+  /// authorization. Worth one tap to be sure.
+  Future<bool> _confirmRemoval(SavedCard card) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text(
+          'Remove this card?',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+        ),
+        content: Text(
+          'The token for ${card.brand.label} ending ${card.last4} is revoked with '
+          'PayLink. It cannot be charged again, and vaulting another takes a new '
+          'payment.',
+          style: const TextStyle(fontSize: 15, height: 1.4, color: ink),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialog).pop(false),
+            style: TextButton.styleFrom(foregroundColor: muted),
+            child: const Text('Keep it'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialog).pop(true),
+            style: TextButton.styleFrom(foregroundColor: danger),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    return confirmed ?? false;
   }
 
   /// Charges a card the payer picked, which only the server can do.
@@ -266,14 +440,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     if (body['challenge_url'] case final String challenge) {
       _say('issuer wants the payer: $challenge');
 
-      return GetPayInCheckout.open(
-        challenge,
-        OpenCheckoutOptions(
-          returnUrl: returnUrl,
-          expectedInvoiceId: body['invoice_id'],
-          title: _title.text.trim(),
-        ),
-      );
+      return _confirmWithIssuer(challenge, body['invoice_id']);
     }
 
     if (answer.statusCode >= 300) {
@@ -831,6 +998,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 ),
             ],
           ),
+          const SizedBox(height: 16),
+          _Card(
+            children: <Widget>[
+              _VaultHeading(count: _cards.length, loading: _cardsLoading),
+              if (_cardsLoading)
+                const _VaultSkeleton()
+              else if (_cards.isEmpty)
+                const _VaultEmpty()
+              else
+                for (final card in _cards)
+                  _VaultedCard(
+                    card: card,
+                    enabled: !_busy && _removing == null,
+                    removing: _removing == card.id,
+                    onRemove: () => unawaited(_revokeSaved(card)),
+                    last: card == _cards.last,
+                  ),
+            ],
+          ),
           const SizedBox(height: 20),
           SizedBox(
             height: 56,
@@ -939,6 +1125,248 @@ class _Card extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The bar over the issuer's page, which is the only chrome it gets.
+///
+/// A way out is not optional: the challenge is the issuer's page, it can fail to load or
+/// hang on a network nobody controls, and a sheet with no close button would strand the
+/// payer on it with a charge already out.
+class _ChallengeBar extends StatelessWidget {
+  const _ChallengeBar({required this.onClose});
+
+  /// Called when the payer gives up on the bank.
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: hairline)),
+      ),
+      child: Row(
+        children: <Widget>[
+          const Expanded(
+            child: Text(
+              'Your bank',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF30313D),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onClose,
+            icon: const Icon(Icons.close_rounded),
+            color: muted,
+            tooltip: 'Close',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The heading over the vault, which says how much of it there is.
+///
+/// The count is part of the heading rather than a line of its own: a tester checking
+/// whether a save landed is counting, and a number beside the word is the whole answer.
+class _VaultHeading extends StatelessWidget {
+  const _VaultHeading({required this.count, required this.loading});
+
+  /// How many cards the server is holding.
+  final int count;
+
+  /// True before the first answer, when no count is honest yet.
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: <Widget>[
+          const Expanded(child: _Label('Vaulted cards')),
+          if (!loading)
+            Text(
+              '$count',
+              style: const TextStyle(
+                fontSize: 13,
+                fontFamily: 'monospace',
+                color: muted,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The vault while the server has not answered yet.
+///
+/// Two grey rows the size of real ones rather than a spinner: the panel then keeps its
+/// height when the answer lands, so nothing below it jumps under the reader's thumb.
+class _VaultSkeleton extends StatelessWidget {
+  const _VaultSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        for (var row = 0; row < 2; row += 1)
+          Container(
+            height: 20,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F4),
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The vault with nothing in it, which is a state with an instruction rather than a hole.
+class _VaultEmpty extends StatelessWidget {
+  const _VaultEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.only(bottom: 14),
+      child: Text(
+        'None held. Tick the consent above and pay once, and the card arrives here '
+        'on the webhook your server receives.',
+        style: TextStyle(fontSize: 14, height: 1.4, color: muted),
+      ),
+    );
+  }
+}
+
+/// One vaulted card, with the only thing an app can ask to have done to it.
+///
+/// Charging it is the sheet's job and happens there; removing it is not a payment and has
+/// nowhere else to live, so it sits on the screen that lists them. The digits are set in
+/// monospace, because the thing a tester is doing with them is comparing them to a list.
+class _VaultedCard extends StatelessWidget {
+  const _VaultedCard({
+    required this.card,
+    required this.enabled,
+    required this.removing,
+    required this.onRemove,
+    required this.last,
+  });
+
+  /// The card, as the server reported it.
+  final SavedCard card;
+
+  /// False while something else is running, so two calls cannot overlap.
+  final bool enabled;
+
+  /// True while this one is being revoked, which is where the waiting is shown.
+  final bool removing;
+
+  /// Called when the payer asks for it to be removed.
+  final VoidCallback onRemove;
+
+  /// True for the last row, which carries no divider under it.
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        border: last ? null : const Border(bottom: BorderSide(color: hairline)),
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Text(
+                      card.brand.label,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF30313D),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      '••••',
+                      style: TextStyle(fontSize: 13, color: muted),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      card.last4,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontFamily: 'monospace',
+                        color: Color(0xFF30313D),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _cardDetail(card),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: card.hasExpired ? danger : muted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (removing)
+            const SizedBox(
+              width: 44,
+              height: 24,
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else
+            TextButton(
+              onPressed: enabled ? onRemove : null,
+              style: TextButton.styleFrom(
+                foregroundColor: danger,
+                minimumSize: const Size(44, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: const Text('Remove'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The line under a card: when it runs out, or that it already has.
+String _cardDetail(SavedCard card) {
+  final month = card.expiryMonth;
+  final year = card.expiryYear;
+
+  if (month == null || year == null) {
+    return card.hasExpired ? 'Expired' : 'No expiry reported';
+  }
+
+  final expiry = '${month.toString().padLeft(2, '0')}/'
+      '${year.toString().padLeft(4, '0').substring(2)}';
+
+  return card.hasExpired ? 'Expired $expiry' : 'Expires $expiry';
 }
 
 /// The small grey word over a field.
@@ -1113,29 +1541,60 @@ class _Consent extends StatelessWidget {
       child: GestureDetector(
         onTap: enabled ? () => onChanged(!value) : null,
         behavior: HitTestBehavior.opaque,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: <Widget>[
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: Checkbox(
-                value: value,
-                activeColor: brand,
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                onChanged:
-                    enabled ? (ticked) => onChanged(ticked ?? false) : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
+          decoration: BoxDecoration(
+            color: value ? const Color(0xFFF1F5F4) : Colors.white,
+            border: Border.all(color: value ? brand : hairline),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: Checkbox(
+                  value: value,
+                  activeColor: brand,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onChanged:
+                      enabled ? (ticked) => onChanged(ticked ?? false) : null,
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                text,
-                style: const TextStyle(fontSize: 15, color: Color(0xFF42434E)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      text,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        height: 1.4,
+                        color: ink,
+                      ),
+                    ),
+                    if (value) ...<Widget>[
+                      const SizedBox(height: 6),
+                      const Text(
+                        'The card is vaulted off this sale. Its token reaches '
+                        'your server on the webhook, never this app.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.4,
+                          color: muted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1226,11 +1685,22 @@ class _DebugPage extends StatelessWidget {
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
         actions: <Widget>[
+          if (lines.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Center(
+                child: Text(
+                  '${lines.length} lines',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                    color: muted,
+                  ),
+                ),
+              ),
+            ),
           IconButton(
-            onPressed: () {
-              onClear();
-              Navigator.of(context).pop();
-            },
+            onPressed: lines.isEmpty ? null : () => unawaited(_clear(context)),
             icon: const Icon(Icons.delete_outline_rounded),
             tooltip: 'Clear',
           ),
@@ -1244,40 +1714,169 @@ class _DebugPage extends StatelessWidget {
         label: const Text('Copy'),
       ),
       body: lines.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'Nothing yet. Take a payment and it will all be here.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 15, color: Color(0xFF6D6E78)),
-                ),
-              ),
-            )
+          ? const _DebugEmpty()
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
               children: <Widget>[
                 _Card(
                   children: <Widget>[
-                    for (final line in lines)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: SelectableText(
-                          line,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            height: 1.4,
-                            fontFamily: 'monospace',
-                            color: Color(0xFF42434E),
-                          ),
-                        ),
-                      ),
+                    for (final line in lines) _TraceLine(line: line),
                   ],
                 ),
               ],
             ),
     );
   }
+
+  /// Clears the trace, once, after asking.
+  ///
+  /// The trace is the only record of a run that has already happened: the server's log can
+  /// be truncated by a restart and the phone keeps nothing else, so a mistaken tap here
+  /// loses the evidence a tester came for.
+  Future<void> _clear(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text(
+          'Clear the trace?',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+        ),
+        content: const Text(
+          'Nothing else holds these lines. Copy them first if the run is one you '
+          'are reporting.',
+          style: TextStyle(fontSize: 15, height: 1.4, color: ink),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialog).pop(false),
+            style: TextButton.styleFrom(foregroundColor: muted),
+            child: const Text('Keep them'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialog).pop(true),
+            style: TextButton.styleFrom(foregroundColor: danger),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed ?? false) {
+      onClear();
+      navigator.pop();
+    }
+  }
+}
+
+/// The trace before anything has run, which says what fills it.
+class _DebugEmpty extends StatelessWidget {
+  const _DebugEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Nothing yet',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF30313D),
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Every call, every answer and every link this app reads lands here, '
+              'in order, as it happens. Take a payment and come back.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 15, height: 1.5, color: muted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One line of the trace: when it happened, and what did.
+///
+/// The time is set apart from the line rather than run into it, because a tester reading
+/// a trace is looking for the order of things and then for the one line that went wrong.
+/// That line is coloured; the rest are not, so the colour means something.
+class _TraceLine extends StatelessWidget {
+  const _TraceLine({required this.line});
+
+  /// The stored line, which begins with a time of day.
+  final String line;
+
+  @override
+  Widget build(BuildContext context) {
+    final split = line.indexOf('  ');
+    final at = split > 0 ? line.substring(0, split) : '';
+    final said = split > 0 ? line.substring(split + 2) : line;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SizedBox(
+            width: 64,
+            child: Text(
+              at,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.5,
+                fontFamily: 'monospace',
+                color: muted,
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              said,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                fontFamily: 'monospace',
+                color: _traceColour(said),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// What colour a trace line is, which is none unless it is the answer or a failure.
+Color _traceColour(String said) {
+  final lowered = said.toLowerCase();
+
+  for (final wrong in const <String>[
+    'failed',
+    'error',
+    'declined',
+    'refusal=session',
+    'not paid',
+    'cancelled',
+    'unavailable',
+  ]) {
+    if (lowered.contains(wrong)) {
+      return danger;
+    }
+  }
+
+  return lowered.startsWith('result:') ? brand : ink;
 }
 
 /// What came back, as plainly as it can be put.
