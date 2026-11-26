@@ -40,12 +40,23 @@
      same rules PayLink's own checkout puts around it, so the button is one row of this
      form rather than a panel sitting on top of one. */
   /* PayLink's SDK writes this row, wording and all, so that it can evidence what the payer
-     agreed to. The page says where it sits and what it is drawn with, never what it says. */
-  #consent { min-height: var(--rowHeight, 56px); display: flex; align-items: center; }
+     agreed to. The page says where it sits and how much room it gets, never what it says.
+
+     Newer SDKs frame a document PayLink serves rather than writing the row into this page,
+     which is what lets it stand as evidence: a page around it can hide the frame, but it
+     cannot tick it. So the container is a plain block that the frame fills, and grows with
+     it: wording that wraps to a second line in another language has to be readable, because
+     a row the payer cannot read is a row they do not tick and a card that is not kept.
+
+     The two rules below still style the row an older SDK writes in place. */
+  #consent { min-height: var(--rowHeight, 56px); display: block; }
   #consent[hidden] { display: none; }
+  #consent [data-paylink-consent-frame] {
+    display: block; width: 100%; min-height: var(--rowHeight, 56px); border: 0;
+  }
   #consent [data-paylink-consent-row] {
     display: flex; align-items: center; gap: 10px; width: 100%;
-    font-size: 14px; color: var(--text, #30313d);
+    min-height: var(--rowHeight, 56px); font-size: 14px; color: var(--text, #30313d);
   }
   #consent [data-paylink-consent] { width: 18px; height: 18px; accent-color: var(--accent, #0570de); }
 
