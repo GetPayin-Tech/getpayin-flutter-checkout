@@ -917,6 +917,36 @@ void main() {
     expect(tester.getSize(find.byType(CardBox)).height, before);
   });
 
+  /*
+   * The box marks itself charging when the page says a charge has gone out. A mark arriving
+   * when the box asked for no charge is about no charge of its own: taken, it would leave
+   * the box charging for an answer that cannot come, Pay refusing, and the sheet closable
+   * only as unconfirmed.
+   */
+  testWidgets('ignores a charge mark for a charge it never asked for',
+      (tester) async {
+    final pending = await openSheet(tester, configuration());
+
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+    await completeTheCard(tester);
+
+    postToCard(<String, Object?>{'type': 'charging'});
+    await pumpFrames(tester);
+
+    await tester.tap(find.byTooltip(const PaymentSheetStrings().close));
+    await pumpFrames(tester);
+
+    final settled = await pending;
+
+    expect(
+      settled.status,
+      CheckoutStatus.cancelled,
+      reason: 'nothing was charged, so closing is the payer leaving',
+    );
+    expect(settled.code, isNull);
+  });
+
   testWidgets('offers no wallet when none belongs on this phone',
       (tester) async {
     await openSheet(
@@ -2397,6 +2427,45 @@ void main() {
      * answered and a saved card charged after it are two payments for one order, with the
      * sheet reporting one.
      */
+    testWidgets('is not opened by a drag that began on its button',
+        (tester) async {
+      final charged = <String>[];
+
+      final pending = await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (card) async {
+            charged.add(card.id);
+
+            return const CheckoutResult(status: CheckoutStatus.paid);
+          },
+        ),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.dragFrom(
+        tester.getCenter(find.byType(WalletSurface)),
+        const Offset(0, 60),
+      );
+      await tester.pump();
+      await leaveTheApp(tester);
+      await pumpFrames(tester);
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(
+        charged,
+        <String>['pm_1'],
+        reason: 'a scroll begun on the row is not a wallet the payer opened',
+      );
+      expect(settled?.status, CheckoutStatus.paid);
+    });
+
     testWidgets('leaves a saved card off once the hold has let go',
         (tester) async {
       final charged = <String>[];

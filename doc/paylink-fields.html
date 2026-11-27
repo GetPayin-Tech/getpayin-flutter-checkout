@@ -233,7 +233,9 @@
     try {
       var parsed = new URL(url, window.location.href);
 
-      return KNOWN_SDKS.indexOf(parsed.origin + parsed.pathname) === -1 ? null : parsed.href;
+      var path = (parsed.pathname || '/').replace(/\/{2,}/g, '/');
+
+      return KNOWN_SDKS.indexOf(parsed.origin + path) === -1 ? null : parsed.href;
     } catch (error) {
       return null;
     }
