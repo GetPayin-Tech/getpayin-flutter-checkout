@@ -13,6 +13,11 @@ All notable changes to this package are documented here. The format follows
   releases the card form only: a saved card is charged on an invoice of its own, so a slow
   wallet charge landing after it would be a second payment for the same order, which no
   per-invoice rule can refuse. The card form pays this invoice and stays open.
+- A checkout opened without `expectedInvoiceId` took a return link for any invoice. It now
+  binds to the invoice its own `checkout_url` names, which `/init` always puts there, so a
+  link for another invoice is passed over and the checkout goes on waiting for its own. This
+  covers `GetPayInCheckout.open`, `GetPayInCheckout.saveCard` and `GetPayInCheckoutView`;
+  the payment sheet already bound to its session's invoice.
 - The payment sheet answers when the app takes away the navigator it was opened from — a
   shell route, a tab, or a `MaterialApp` rebuilt on sign-out. Nothing pops the route then,
   so `GetPayInPaymentSheet.show` waited for an answer that could not come and the

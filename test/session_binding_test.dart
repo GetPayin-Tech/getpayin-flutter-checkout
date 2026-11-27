@@ -1,9 +1,40 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:getpayin_checkout/getpayin_checkout.dart';
+import 'package:getpayin_checkout/src/core/return_url.dart' show invoiceBoundTo;
 
 import 'support/fixtures.dart';
 
 void main() {
+  /*
+   * A checkout link names the invoice it was raised for: `/init` always puts it there. So a
+   * checkout that was told no invoice is not a checkout with nothing to bind to — it has
+   * the one in the link it is opening, which is the same invoice by a shorter route.
+   */
+  group('the invoice a checkout is bound to', () {
+    test('is the one the integrator named', () {
+      expect(
+        invoiceBoundTo('INV-REAL', testCheckoutUrlFor(4512)),
+        'INV-REAL',
+      );
+    });
+
+    test('is the one the checkout link names when the app named none', () {
+      expect(invoiceBoundTo(null, testCheckoutUrlFor(4512)), '4512');
+    });
+
+    test('is nothing when neither names one', () {
+      expect(invoiceBoundTo(null, testCheckoutUrl), isNull);
+    });
+
+    test('is nothing when the link names one nothing can read', () {
+      expect(invoiceBoundTo(null, '$testCheckoutUrl?invoice_id=%20'), isNull);
+    });
+
+    test('is nothing when the checkout URL is not one', () {
+      expect(invoiceBoundTo(null, 'not a url at all'), isNull);
+    });
+  });
+
   group('resolveReturn binds a link to the invoice it was opened for', () {
     test('accepts a paid link for the expected invoice', () {
       final result = resolveReturn(

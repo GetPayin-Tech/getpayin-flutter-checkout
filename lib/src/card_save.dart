@@ -1,6 +1,5 @@
 import 'core/invoice_id.dart';
 import 'core/return_url.dart';
-import 'core/url.dart';
 import 'types.dart';
 
 /// How a card save ended.
@@ -161,15 +160,4 @@ CardSaveResult cardSaveFromCheckout(CheckoutResult checkout,
   }
 
   return readCardSave(link, expectedInvoiceId: expectedInvoiceId);
-}
-
-/// The invoice id a hosted URL names, so a run can be bound to the one it opened.
-///
-/// `POST /v2/integration/tokens/init` hands back a `tokenization_url` rather than an invoice
-/// id, and `/init` hands back both. Reading it off the URL is what lets a card save pass
-/// `expectedInvoiceId` and so refuse a return link that names another run.
-String? invoiceIdInCheckoutUrl(String url) {
-  final value = readQuery(parseUrl(url)?.query ?? '')['invoice_id']?.first;
-
-  return value == null || value.trim().isEmpty ? null : value.trim();
 }

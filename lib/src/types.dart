@@ -195,8 +195,13 @@ class CheckoutOptions {
   ///
   /// Supply it whenever you have it. The return link is a public app scheme that any web
   /// page, message or other app on the phone can invoke with whatever query it likes, so a
-  /// link naming a different invoice is not this checkout's result. With this set, such a
-  /// link is reported as [CheckoutStatus.notPaid] instead of being taken at its word.
+  /// link naming a different invoice is not this checkout's result: it is passed over, and
+  /// the checkout goes on waiting for its own.
+  ///
+  /// Left null, the checkout binds to the invoice its own `checkout_url` names instead,
+  /// which `/init` always puts there. Passing it is still worth doing — it comes from the
+  /// server that raised the invoice, and it is what a `tokenization_url` or a link built
+  /// some other way may not carry.
   ///
   /// An `int` is accepted as well as a `String`: `POST /api/integration/init` returns the
   /// invoice id as a JSON number, while the return link carries it as text. The two are

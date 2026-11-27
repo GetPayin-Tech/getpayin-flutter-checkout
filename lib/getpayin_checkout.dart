@@ -12,12 +12,7 @@
 library;
 
 export 'src/card_save.dart'
-    show
-        CardSaveResult,
-        CardSaveStatus,
-        cardSaveFromCheckout,
-        invoiceIdInCheckoutUrl,
-        readCardSave;
+    show CardSaveResult, CardSaveStatus, cardSaveFromCheckout, readCardSave;
 export 'src/checkout.dart' show GetPayInCheckout;
 export 'src/sheet/amount.dart' show formatAmount;
 export 'src/sheet/billing_countries.dart'
@@ -61,6 +56,7 @@ export 'src/core/presentation.dart' show resolvePresentation;
 export 'src/core/return_url.dart'
     show
         cancelledResult,
+        invoiceIdInCheckoutUrl,
         matchesReturnUrl,
         readCheckoutResult,
         readReturnClaim,

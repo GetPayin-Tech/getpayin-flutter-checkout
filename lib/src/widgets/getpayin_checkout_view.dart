@@ -9,6 +9,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../core/intent_link.dart';
 import '../core/messages.dart';
 import '../core/navigation.dart';
+import '../core/return_url.dart';
 import '../core/text.dart';
 import '../core/url.dart';
 import '../platform.dart';
@@ -138,11 +139,16 @@ class _GetPayInCheckoutViewState extends State<GetPayInCheckoutView> {
     }
   }
 
+  /// The invoice this screen holds a link to, which is the one it was told about or the
+  /// one the checkout link itself names.
+  Object? get _boundInvoiceId =>
+      invoiceBoundTo(widget.expectedInvoiceId, widget.checkoutUrl);
+
   void _startCheckout() {
     final source = buildCheckoutSource(
       widget.checkoutUrl,
       widget.returnUrl,
-      widget.expectedInvoiceId,
+      _boundInvoiceId,
     );
     final settings = buildCheckoutWebViewSettings(currentPlatformName());
     final controller = WebViewController();

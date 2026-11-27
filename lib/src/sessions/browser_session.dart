@@ -103,13 +103,15 @@ Future<CheckoutResult> runBrowserCheckout(
 }) async {
   final phone = ports ?? browserCheckoutPorts;
   final options = request.options;
+  final boundInvoiceId =
+      invoiceBoundTo(options.expectedInvoiceId, request.checkoutUrl);
   final result = Deferred<CheckoutResult>();
   final dismissed = Deferred<void>();
   var passedOver = false;
   late CheckoutWatcher linkWatcher;
 
   void onLink(String url) {
-    if (!returnLinkAnswers(url, expectedInvoiceId: options.expectedInvoiceId)) {
+    if (!returnLinkAnswers(url, expectedInvoiceId: boundInvoiceId)) {
       if (kDebugMode) {
         debugPrint(
           'GetPayIn: passed over a return link that names another invoice, or none',
@@ -124,7 +126,7 @@ Future<CheckoutResult> runBrowserCheckout(
     }
 
     result.resolve(
-      resolveReturn(url, expectedInvoiceId: options.expectedInvoiceId),
+      resolveReturn(url, expectedInvoiceId: boundInvoiceId),
     );
   }
 
