@@ -38,12 +38,14 @@ Map<String, Object?> testInitResponse({
   String origin = testOrigin,
   Object? invoiceId = 90210,
   String? expiresAt,
+  String? tokenizationId,
 }) {
   return <String, Object?>{
     'success': true,
     'data': <String, Object?>{
       'checkout_url': testCheckoutUrl,
       'invoice_id': invoiceId,
+      if (tokenizationId != null) 'tokenization_id': tokenizationId,
       'fields': <String, Object?>{
         'client_token': 'eyJpdiI6ZXhhbXBsZQ',
         'sdk_url': 'https://pay.example.com/sdk/paylink-fields-v1.js',
@@ -55,6 +57,11 @@ Map<String, Object?> testInitResponse({
 }
 
 /// The session the sheet runs against.
-PayLinkFieldsSession testFieldsSession({String origin = testOrigin}) {
-  return PayLinkFieldsSession.fromInit(testInitResponse(origin: origin))!;
+PayLinkFieldsSession testFieldsSession({
+  String origin = testOrigin,
+  String? tokenizationId,
+}) {
+  return PayLinkFieldsSession.fromInit(
+    testInitResponse(origin: origin, tokenizationId: tokenizationId),
+  )!;
 }

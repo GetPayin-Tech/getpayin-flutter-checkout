@@ -58,6 +58,7 @@ void main() {
     Duration successPause = Duration.zero,
     String origin = testOrigin,
     Object? expectedInvoiceId = 90210,
+    String? tokenizationId,
   }) {
     return PaymentSheetConfiguration(
       collectBillingAddress: collectBillingAddress,
@@ -65,7 +66,8 @@ void main() {
       onHandover: onHandover,
       onDiagnostic: onDiagnostic,
       successPause: successPause,
-      session: testFieldsSession(origin: origin),
+      session:
+          testFieldsSession(origin: origin, tokenizationId: tokenizationId),
       fieldsPageUrl: testFieldsPageUrl,
       returnUrl: testReturnUrl,
       expectedInvoiceId: expectedInvoiceId,
@@ -900,6 +902,57 @@ void main() {
       96 - const PaymentSheetStyle().rowHeight,
       reason: 'the box grows by what the row grew by, and no more',
     );
+  });
+
+  /*
+   * A payment opened with `tokenize` keeps nothing unless the payer agrees on PayLink's own
+   * row, and that row is only drawn for a sheet told to keep the card. Both halves are the
+   * integrator's to set, in two different places, and a payment missing the second one
+   * settles as a success with no card kept.
+   */
+  testWidgets('says so when the card save it was opened for was not asked for',
+      (tester) async {
+    final notes = <String>[];
+
+    await openSheet(
+      tester,
+      configuration(
+        tokenizationId: '6c7291e89b594',
+        onDiagnostic: notes.add,
+      ),
+    );
+
+    expect(
+      notes.where((note) => note.startsWith('card save not asked')),
+      hasLength(1),
+    );
+  });
+
+  testWidgets('says nothing when the sheet was asked to keep the card',
+      (tester) async {
+    final notes = <String>[];
+
+    await openSheet(
+      tester,
+      configuration(
+        tokenizationId: '6c7291e89b594',
+        keepTheCard: true,
+        onDiagnostic: notes.add,
+      ),
+    );
+
+    expect(
+        notes.where((note) => note.startsWith('card save not asked')), isEmpty);
+  });
+
+  testWidgets('says nothing about a save for a payment opened without one',
+      (tester) async {
+    final notes = <String>[];
+
+    await openSheet(tester, configuration(onDiagnostic: notes.add));
+
+    expect(
+        notes.where((note) => note.startsWith('card save not asked')), isEmpty);
   });
 
   testWidgets('leaves the box alone when the row fits the height it was given',

@@ -57,6 +57,34 @@ void main() {
     test('has not expired when nothing said when it would', () {
       expect(testFieldsSession().hasExpired, isFalse);
     });
+
+    test('reads the card save a payment was opened with', () {
+      final session = PayLinkFieldsSession.fromInit(
+        testInitResponse(tokenizationId: '6c7291e89b594'),
+      )!;
+
+      expect(session.tokenizationId, '6c7291e89b594');
+      expect(session.wasOpenedToKeepTheCard, isTrue);
+    });
+
+    /*
+     * A server that names it the way the rest of its JSON is named is not wrong.
+     */
+    test('reads that save under either spelling', () {
+      final data = testInitResponse()['data']! as Map<String, Object?>;
+
+      data['tokenizationId'] = '6c7291e89b594';
+
+      expect(
+          PayLinkFieldsSession.fromInit(data)?.tokenizationId, '6c7291e89b594');
+    });
+
+    test('was opened for no save when /init named none', () {
+      final session = testFieldsSession();
+
+      expect(session.tokenizationId, isNull);
+      expect(session.wasOpenedToKeepTheCard, isFalse);
+    });
   });
 
   group('the registered origin', () {

@@ -6,6 +6,15 @@ All notable changes to this package are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `PayLinkFieldsSession.tokenizationId` and `PayLinkFieldsSession.wasOpenedToKeepTheCard`,
+  which say whether `/init` opened this payment to keep the payer's card as well as charge
+  it. The payment sheet reads them: a payment opened to keep the card, taken on a sheet that
+  was not told to ask for it, is paid and keeps no card, and nothing anywhere says so. The
+  sheet now says it — through `onDiagnostic`, and in a debug build's log — before it opens.
+  It is said rather than refused, because the payment itself is a good one.
+
 ### Fixed
 
 - A drag that begins on the wallet button no longer counts as the payer opening the wallet.

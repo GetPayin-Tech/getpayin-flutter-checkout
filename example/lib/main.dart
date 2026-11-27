@@ -551,6 +551,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         fieldsPageHeaders: fieldsPageHeaders,
         style: sheetStyle,
         collectBillingAddress: _collectBilling,
+        keepTheCard: _keepCard,
         savedCards: _cards,
         chargeSavedCard: _chargeSaved,
         onDiagnostic: (note) => _say('page: $note'),

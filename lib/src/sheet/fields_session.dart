@@ -137,6 +137,7 @@ class PayLinkFieldsSession {
     required this.checkoutUrl,
     this.invoiceId,
     this.expiresAt,
+    this.tokenizationId,
   });
 
   /// Reads the session out of what `/init` answered.
@@ -173,6 +174,8 @@ class PayLinkFieldsSession {
       expiresAt: DateTime.tryParse(
         _stringAt(fields, 'expires_at') ?? _stringAt(data, 'expires_at') ?? '',
       ),
+      tokenizationId: _stringAt(data, 'tokenization_id') ??
+          _stringAt(data, 'tokenizationId'),
     );
   }
 
@@ -193,6 +196,21 @@ class PayLinkFieldsSession {
 
   /// When the client token stops working.
   final DateTime? expiresAt;
+
+  /// The card save this payment was opened with, when it was opened with one.
+  ///
+  /// `/init` answers with one for a payment asked for with `tokenize`, and with nothing for
+  /// an ordinary sale. It is PayLink's own reference for the save and there is nothing to do
+  /// with it here; the sheet reads it to know what this payment was for.
+  final String? tokenizationId;
+
+  /// True when this payment was opened to keep the payer's card as well as charge it.
+  ///
+  /// The save needs the payer's agreement on PayLink's own row, which the sheet draws when
+  /// it is configured with `keepTheCard`. A payment opened for a save and taken without
+  /// that row is paid and keeps no card, so the sheet says so rather than letting it pass
+  /// for a save.
+  bool get wasOpenedToKeepTheCard => tokenizationId != null;
 
   /// True once the client token can no longer be used, so the caller can mint a new one.
   bool get hasExpired {
