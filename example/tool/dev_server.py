@@ -280,6 +280,12 @@ PENDING: dict[str, dict] = {}
 # link to an app the phone does not have goes nowhere at all.
 DEFAULT_RETURN_URL = "myapp://payment-return"
 
+# How long to let the device check run before charging anyway. CyberSource says a profile
+# takes a few seconds, and a payer held in front of a blank page longer than that reads it
+# as the app having hung. A charge sent without the profile is still a charge; it is the
+# authentication that goes without.
+DEVICE_CHECK_SECONDS = 6
+
 # The link each finished challenge was answered with. A reload of the return page, or the
 # issuer posting twice, gets the same answer again: the charge is not pending any more,
 # and "not pending" is not a decline.
@@ -294,20 +300,23 @@ def data_of(answer: dict) -> dict:
 
 
 def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
-    """Charges a vaulted card, asking the issuer to authenticate the payer first.
+    """Begins a charge on a vaulted card, by profiling the device the payer is on.
 
     Hands back PayLink's own status with the answer. A refusal that reached the app as a
     success would be read as a payment: the app has nothing else to go on, and a declined
     charge announced as paid is the one mistake a payments harness must not make.
 
-    Three calls rather than one, because a charge sent without an authentication return URL
-    is never challenged: the issuer is not asked, and the payment goes through on the
-    strength of the card having been authenticated once, when it was vaulted. Sending them
-    lets the issuer stop the charge at 202 and ask for a passcode.
+    An authenticated charge is four calls, not one, and three of them need the payer's
+    browser. `/tokens/authentication/setup` answers with a page to load and a reference to
+    quote; the page profiles the device; only then is the charge sent, with that reference
+    on it, and the issuer has something to judge before deciding whether to ask for a
+    passcode. So this call ends at the page rather than at the charge, and the app opens it
+    exactly as it opens a challenge -- [run_pending_charge] takes it from there.
 
-    The challenge is run over [public_base] rather than this server's LAN address: the
-    issuer's page is HTTPS and posts its answer back to the return URL, and a browser will
-    not carry that answer down to plain HTTP.
+    Skipped when there is nowhere public to send the payer: the pages are PayLink's and the
+    issuer's, both HTTPS, and a browser will not carry their answers down to plain HTTP.
+    The charge still goes out, unauthenticated, which is what a harness with no tunnel can
+    offer and is said out loud because nothing else marks the difference.
     """
     card_token = str(asked.get("card_token", "")).strip()
     public_base = str(asked.get("public_base", "")).strip().rstrip("/")
@@ -348,8 +357,19 @@ def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
         )
 
     if authenticating:
-        charge["authentication_return_url"] = f"{public_base}/3ds/{reference}/return"
-        charge["authentication_reference_id"] = setup["data"]["reference_id"]
+        # Kept apart from the charge until it is sent, because the signature is every field
+        # concatenated in the order PayLink declares them, and the device fields are
+        # declared before these three. Appending them to a charge that already carries
+        # these would sign a different string than the one PayLink rebuilds, and every
+        # charge would come back 422 "Invalid signature".
+        authentication: "OrderedDict[str, str]" = OrderedDict(
+            (
+                (
+                    "authentication_return_url",
+                    f"{public_base}/3ds/{reference}/return",
+                ),
+            )
+        )
 
         # Asked for only when the environment says PayLink understands the field, because
         # the signature covers every field sent: against a PayLink that does not validate
@@ -361,7 +381,25 @@ def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
         # defaults to "01", and the issuer takes the cheap answer -- a frictionless pass,
         # and a step-up nobody can try. The issuer may still refuse: it is a request.
         if config.get("GETPAYIN_REQUEST_3DS_CHALLENGE") == "1":
-            charge["authentication_challenge"] = "mandate"
+            authentication["authentication_challenge"] = "mandate"
+
+        authentication["authentication_reference_id"] = setup["data"]["reference_id"]
+
+        PENDING[reference] = {
+            "card_token": card_token,
+            "charge": charge,
+            "authentication": authentication,
+            "access_token": setup["data"]["access_token"],
+            "device_data_collection_url": setup["data"]["device_data_collection_url"],
+            "return_url": str(asked.get("return_url") or DEFAULT_RETURN_URL).strip(),
+            "config": config,
+        }
+
+        return 200, {
+            "success": False,
+            "status": "requires_authentication",
+            "challenge_url": f"{public_base}/3ds/{reference}",
+        }
 
     status, answer = call_tokens("tokens/charge", charge, config)
 
@@ -371,36 +409,80 @@ def charge_card(asked: dict, config: dict[str, str]) -> tuple[int, dict]:
     if status >= 500:
         raise RuntimeError(f"PayLink answered {status}: the card may have been charged")
 
-    if status != 202:
-        # The invoice is the only handle on what the issuer decided. PayLink answers a
-        # settled charge with no authentication fields at all, so whether this was a
-        # frictionless pass or no authentication is a question for `payment_attempts.eci_raw`
-        # on the PayLink side -- and that needs the invoice id this prints.
-        sys.stderr.write(
-            f"charge {status} invoice={data_of(answer).get('invoice_id')} "
-            f"asked_the_issuer={bool(authenticating)}\n"
+    # The invoice is the only handle on what the issuer decided. PayLink answers a settled
+    # charge with no authentication fields at all, so whether this was a frictionless pass
+    # or no authentication is a question for `payment_attempts.eci_raw` on the PayLink side
+    # -- and that needs the invoice id this prints.
+    sys.stderr.write(
+        f"charge {status} invoice={data_of(answer).get('invoice_id')} "
+        f"asked_the_issuer=False\n"
+    )
+
+    return status, answer | {"authenticated": False}
+
+
+def run_pending_charge(reference: str, device: dict[str, str]) -> tuple[str, str]:
+    """Sends the charge this device was profiled for, and says where the payer goes next.
+
+    Answers either ("challenge", the issuer's page) or ("link", a return link the app
+    reads). The device fields go with it: an authentication is judged on the machine the
+    payer is on, and a charge that states nothing about it is judged on nothing.
+
+    The reference is spent either way. A page the payer reloads, or a back button, must not
+    put a second charge on the same card: the first one's answer is already on its way to
+    the app, and a harness that charged twice would be the only thing in the room that
+    could not tell one payment from two.
+    """
+    pending = PENDING.pop(reference, None)
+
+    if pending is None or "charge" not in pending:
+        return "link", unconfirmed_link("This server is not waiting on that charge")
+
+    charge = OrderedDict(pending["charge"])
+    config = pending["config"]
+    return_url = pending["return_url"]
+
+    for field, value in device.items():
+        if value:
+            charge[field] = value
+
+    charge.update(pending["authentication"])
+
+    try:
+        status, answer = call_tokens("tokens/charge", charge, config)
+    except Exception:  # noqa: BLE001 - no answer at all is as unknown as a server error
+        return "link", unconfirmed_link(
+            "PayLink did not answer: the card may have been charged", None, return_url
         )
 
-        return status, answer | {"authenticated": authenticating}
+    if status >= 500:
+        return "link", unconfirmed_link(
+            f"PayLink answered {status}: the card may have been charged", None, return_url
+        )
 
     data = answer.get("data", {})
 
+    sys.stderr.write(
+        f"charge {status} invoice={data.get('invoice_id')} asked_the_issuer=True "
+        f"{answer.get('message') or ''}\n"
+    )
+
+    if status != 202:
+        return "link", completion_link(
+            status, answer, data.get("invoice_id"), return_url
+        )
+
     PENDING[reference] = {
-        "card_token": data.get("card_token") or card_token,
+        "card_token": data.get("card_token") or pending["card_token"],
         "invoice_id": data.get("invoice_id"),
         "step_up_url": data.get("step_up_url"),
         "access_token": data.get("access_token"),
         "authentication_transaction_id": data.get("authentication_transaction_id"),
-        "return_url": str(asked.get("return_url") or DEFAULT_RETURN_URL).strip(),
+        "return_url": return_url,
         "config": config,
     }
 
-    return status, {
-        "success": False,
-        "status": "requires_authentication",
-        "challenge_url": f"{public_base}/3ds/{reference}",
-        "invoice_id": data.get("invoice_id"),
-    }
+    return "challenge", step_up_page(PENDING[reference])
 
 
 def revoke_card(asked: dict, config: dict[str, str]) -> dict:
@@ -421,6 +503,58 @@ def revoke_card(asked: dict, config: dict[str, str]) -> dict:
         print(f"Revoked card token {token}")
 
     return answer
+
+
+def device_check_page(pending: dict, reference: str) -> str:
+    """The page that lets CyberSource look at the machine the payer is on.
+
+    PayLink answers `/tokens/authentication/setup` with a URL and an access token, and this
+    is what they are for: the token is posted into a hidden frame on that URL, the frame
+    profiles the browser, and the charge that quotes the same reference is judged with the
+    answer. A charge sent without it carries no authentication at all -- the issuer is never
+    asked, the passcode never appears, and a company whose fraud rules want 3-D Secure
+    refuses what arrives.
+
+    It moves on either when the frame says it is done or when the wait is up, because the
+    frame is on another origin and nothing here can see inside it. Whichever comes first,
+    the charge goes out once: `go` is spent the first time it runs.
+
+    The browser's own user agent travels on the link, since it is the payer's and this
+    server never sees it -- the app's calls come from the app's own HTTP client.
+    """
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checking your device</title>
+<style>
+  body {{ margin:0; font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         color:#30313d; display:flex; align-items:center; justify-content:center; height:100vh; }}
+  iframe {{ display:none; }}
+</style></head>
+<body>
+  <p>Checking your device&hellip;</p>
+  <iframe name="deviceCheck"></iframe>
+  <form id="profile" method="post" target="deviceCheck"
+        action="{pending['device_data_collection_url']}">
+    <input type="hidden" name="JWT" value="{pending['access_token']}">
+  </form>
+  <script>
+    var went = false;
+    function go() {{
+      if (went) {{ return; }}
+      went = true;
+      location.replace('/3ds/{reference}/charge?ua=' +
+        encodeURIComponent(navigator.userAgent));
+    }}
+    window.addEventListener('message', function (event) {{
+      var said = event.data;
+      if (typeof said !== 'string') {{ said = JSON.stringify(said || ''); }}
+      if (said.indexOf('profile.completed') !== -1) {{ go(); }}
+    }});
+    document.getElementById('profile').submit();
+    setTimeout(go, {DEVICE_CHECK_SECONDS * 1000});
+  </script>
+</body></html>"""
 
 
 def step_up_page(pending: dict) -> str:
@@ -623,11 +757,29 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send(200, {"ok": True, "base_url": self.config["GETPAYIN_BASE_URL"]})
 
-    def _three_d_secure(self) -> None:
-        """The two halves of a challenge: the page that raises it, and the answer coming back.
+    def _payers_device(self, asked: dict) -> dict[str, str]:
+        """What this server can honestly say about the machine the payer is on.
 
-        Both arrive on the payer's browser rather than from the app, which is why they are
-        GET routes on whatever host the challenge was started on.
+        The address is read from the forwarding header first: a charge that reaches this
+        server through a tunnel arrives from the tunnel, and the tunnel's own address says
+        nothing about the payer. Only what is known is sent -- an invented device is worse
+        than none, because it is believed.
+        """
+        forwarded = self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        agent = str(asked.get("ua", [""])[0]).strip()
+
+        return {
+            "customer_ip": forwarded or self.client_address[0],
+            "user_agent": agent[:255],
+        }
+
+    def _three_d_secure(self) -> None:
+        """The three stops a saved card's charge makes in the payer's browser.
+
+        The device is profiled, then the charge goes out with the reference that profile
+        was filed under, then the issuer's page raises the passcode and hands the payer
+        back. All three arrive on the payer's browser rather than from the app, which is
+        why they are GET routes on whatever host the charge was started on.
         """
         parts = self.path.split("?")[0].strip("/").split("/")
         reference = parts[1] if len(parts) > 1 else ""
@@ -637,14 +789,29 @@ class Handler(BaseHTTPRequestHandler):
 
             return
 
-        pending = PENDING.get(reference)
+        if parts[-1] == "charge":
+            asked = urllib.parse.parse_qs(self.path.partition("?")[2])
+            went, answer = run_pending_charge(reference, self._payers_device(asked))
 
-        if pending is None:
-            self._send_html("<p>That challenge is no longer waiting.</p>", 404)
+            if went == "challenge":
+                self._send_html(answer)
+            else:
+                self._send_to_app(answer)
 
             return
 
-        self._send_html(step_up_page(pending))
+        pending = PENDING.get(reference)
+
+        if pending is None:
+            self._send_html("<p>That charge is no longer waiting.</p>", 404)
+
+            return
+
+        self._send_html(
+            device_check_page(pending, reference)
+            if "device_data_collection_url" in pending
+            else step_up_page(pending)
+        )
 
     def _send_page(self) -> None:
         """Serves the card fields page, pointed at whichever PayLink this server uses.

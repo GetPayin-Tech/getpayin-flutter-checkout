@@ -112,12 +112,26 @@ The next payment then offers that card on the sheet. Picking it calls `/charge` 
 signs `tokens/charge` with the hash token and answers. The payer types nothing and the app
 never sees the token, which is the whole point of a vaulted card.
 
-The charge asks the issuer to authenticate the payer, which takes three calls rather than
-one: `tokens/authentication/setup`, then `tokens/charge` carrying an
-`authentication_return_url`, then `tokens/authentication/complete` once the payer has
-answered. Without those fields the issuer is never asked and the charge simply goes through
-on the strength of the card having been authenticated when it was vaulted -- which is the
-documented default, not a fault.
+The charge asks the issuer to authenticate the payer, which takes four calls and three
+stops in the payer's browser. `tokens/authentication/setup` answers with a page to load and
+a reference to quote. The app opens that page -- it is handed over as `challenge_url`, the
+same field a challenge arrives on -- and it posts the setup's access token into a hidden
+frame, where CyberSource looks at the browser it is running in. Only then does
+`tokens/charge` go out, quoting the reference the profile was filed under, and the issuer
+has something to judge before deciding whether to ask for a passcode.
+`tokens/authentication/complete` finishes it once the payer has answered.
+
+Skip the profiling and the enrollment check has nothing to judge: it returns without
+authentication, the authorization goes to the gateway as a plain internet charge, and a
+company whose fraud rules want 3-D Secure refuses it after the card has already authorized
+-- an authorization, a reject and a reversal, with nothing captured and no passcode ever
+shown. The charge also states what this server honestly knows about the payer's machine,
+its address and its user agent, because an authentication is judged on the machine the
+payer is on.
+
+With no tunnel there is nowhere to run any of it, so the charge goes out unauthenticated
+and says so on the server's log. That is the documented default, not a fault -- the card
+was authenticated once, when it was vaulted.
 
 Set `GETPAYIN_REQUEST_3DS_CHALLENGE=1` in `dev.env` and the charge also carries
 `authentication_challenge: "mandate"`, which asks the issuer for a passcode rather than
