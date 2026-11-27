@@ -8,6 +8,11 @@ All notable changes to this package are documented here. The format follows
 
 ### Fixed
 
+- A saved card could be charged after a wallet the payer opened had gone quiet. The sheet
+  lets go 15 seconds after the payer comes back with no charge started, and that hold now
+  releases the card form only: a saved card is charged on an invoice of its own, so a slow
+  wallet charge landing after it would be a second payment for the same order, which no
+  per-invoice rule can refuse. The card form pays this invoice and stays open.
 - The payment sheet answers when the app takes away the navigator it was opened from — a
   shell route, a tab, or a `MaterialApp` rebuilt on sign-out. Nothing pops the route then,
   so `GetPayInPaymentSheet.show` waited for an answer that could not come and the

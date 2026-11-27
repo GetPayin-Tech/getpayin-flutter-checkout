@@ -530,6 +530,16 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       _walletOpen ||
       _walletChallenge;
 
+  /// True while charging a saved card would be a second payment for this order.
+  ///
+  /// Anything in flight, and a wallet the payer opened that has not answered. The hold on
+  /// the sheet lets go after [_walletGrace] so a payer who dismissed the wallet is not
+  /// stranded, but a wallet slower than that can still charge — and a saved card is charged
+  /// on an invoice of its own, so the two would be two payments, which no per-invoice rule
+  /// on PayLink's side can refuse. The card form stays open either way: it pays this
+  /// invoice, and a second charge on one invoice is refused.
+  bool get _savedCardWouldBeSecond => _isSettling || _walletUnanswered;
+
   /// True while a payment the card box is not running is in flight: a saved card, or a
   /// wallet the payer has opened, whose issuer's check is up, or whose charge is out.
   bool get _anotherPaymentIsOut =>
@@ -829,7 +839,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     final card = _selected;
     final charge = _config.chargeSavedCard;
 
-    if (card == null || charge == null || _isSettling) {
+    if (card == null || charge == null || _savedCardWouldBeSecond) {
       return;
     }
 
@@ -1148,7 +1158,10 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     final settling = _isSettling;
     final wallet = _walletShown;
     final saved = _config.savedCards;
-    final canPickCard = saved.length > 1 && !settling;
+    final savedCardHeld = _savedCardWouldBeSecond;
+    final canPickCard = saved.length > 1 && !savedCardHeld;
+    final canPaySaved =
+        _selected != null && _config.chargeSavedCard != null && !savedCardHeld;
     final walletRow = wallet == null ? null : _walletRow(wallet);
 
     if (_walletChallenge && walletRow != null) {
@@ -1208,10 +1221,7 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
         label: '${_config.strings.pay} $_amountLabel'.trim(),
         style: _config.style,
         busy: _charging,
-        onPressed:
-            _selected != null && _config.chargeSavedCard != null && !settling
-                ? _paySaved
-                : null,
+        onPressed: canPaySaved ? _paySaved : null,
       ),
     ];
   }
