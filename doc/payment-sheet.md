@@ -249,7 +249,12 @@ the wallet puts the app in the background: the app leaving within 10 seconds of 
 the wallet button. The page marks its own address once the charge is out, and the sheet
 holds, on the wallet's screen, until the answer. A payer who comes back without paying leaves
 nothing on the page to say so: if no charge starts within 15 seconds of the app being back,
-the sheet lets the payer use it again. A wallet charge marked later still, after its button
+the sheet lets the payer use it again — the card form, which pays this invoice, and which
+PayLink refuses to charge a second time. A saved card stays off for the rest of that sheet,
+because it is charged on an invoice of its own: a wallet slower than those 15 seconds and a
+saved card charged after it would be two payments for one order, and nothing on either side
+could refuse the second. A payer who wants the saved card after all closes the sheet and
+opens it again. A wallet charge marked later still, after its button
 has left the screen as the payer pays another way or moves on to the card form, has no button
 left to answer on: from then on the sheet reports the payment as `outcomeUnknown`, so your
 server checks what went through.
