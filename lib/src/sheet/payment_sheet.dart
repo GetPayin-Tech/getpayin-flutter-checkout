@@ -230,6 +230,36 @@ class GetPayInPaymentSheet extends StatefulWidget {
     );
   }
 
+  /// The line an integrator gets when this payment's save was never going to happen.
+  ///
+  /// Names the one setting that would have asked for it, because that is the whole of what
+  /// there is to do about it.
+  static const String _cardSaveNotAsked =
+      'card save not asked: this payment was opened to keep the card and '
+      'the sheet was not told to ask for it, so it will be paid and no card '
+      'kept (set keepTheCard on PaymentSheetConfiguration)';
+
+  /// Says so when the payment was opened to keep the card and the sheet was not asked to.
+  ///
+  /// `/init` with `tokenize` opens a save that completes only on the payer's agreement,
+  /// drawn by PayLink on the row [PaymentSheetConfiguration.keepTheCard] gives a place to.
+  /// Opened for a save and taken without that row, the payment goes through and no card is
+  /// kept, which reads as a success from everywhere the integrator can see — so it is worth
+  /// a line in their log. Said rather than refused, because the payment is a good one and a
+  /// sale is not worth failing over a card that was not asked for.
+  static void _reportCardSaveNotAsked(PaymentSheetConfiguration configuration) {
+    if (configuration.keepTheCard ||
+        !configuration.session.wasOpenedToKeepTheCard) {
+      return;
+    }
+
+    configuration.onDiagnostic?.call(_cardSaveNotAsked);
+
+    if (kDebugMode) {
+      debugPrint('GetPayIn payment sheet: $_cardSaveNotAsked');
+    }
+  }
+
   /// Presents the sheet and completes once the payment ends.
   ///
   /// The result is a report of what PayLink said, never proof of payment: confirm the
@@ -255,6 +285,7 @@ class GetPayInPaymentSheet extends StatefulWidget {
     assertExpectedInvoiceId(configuration.expectedInvoiceId);
     assertReturnUrl(configuration.returnUrl);
     assertCheckoutUrl(configuration.session.checkoutUrl);
+    _reportCardSaveNotAsked(configuration);
 
     final exit = _SheetExit();
     final outcome = await checkoutGuard.run(

@@ -225,6 +225,12 @@ Reads the session out of what `/init` answered, taking either the whole envelope
 `data` block. Null when the response carries no `fields` block — which is what a company
 without hosted fields gets — so fall back to `checkout_url`.
 
+`tokenizationId` is the card save the payment was opened with, and
+`wasOpenedToKeepTheCard` says whether there is one. A payment opened with `tokenize` keeps
+the card only if the payer agrees on PayLink's own row, which the sheet draws when it is
+given `keepTheCard`: without it the payment is taken and no card is kept, so the sheet says
+so on `onDiagnostic` before it opens.
+
 ## `buildFieldsPageHtml(sdkUrl:)`
 
 ```dart
