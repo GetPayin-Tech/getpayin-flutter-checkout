@@ -8,6 +8,11 @@ All notable changes to this package are documented here. The format follows
 
 ### Fixed
 
+- The card box grows with the consent row when PayLink's framed row is taller than a row of
+  the sheet's own, which it is where the wording wraps to a second line. The box is a fixed
+  height around a web view, so the tick sat below the fold and the pay button refused with
+  nothing on screen saying why. The page reports the row's height and the box takes it.
+
 - The payment sheet ends when the card page loads again while a charge is running, instead
   of waiting for an answer that can no longer reach it. The page that sent the charge is
   gone and the one replacing it knows nothing of it, so the payer was left on an empty card

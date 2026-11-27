@@ -19,6 +19,27 @@ CardFieldsSnapshot filledIn([CardFieldsSnapshot? from]) {
 }
 
 void main() {
+  group('the consent row growing', () {
+    test('is kept on the box', () {
+      final grown = applyFieldsEvent(
+        const CardFieldsSnapshot(),
+        const FieldsConsentHeight(88),
+      );
+
+      expect(grown.consentHeight, 88);
+    });
+
+    test('survives a message being shown and cleared', () {
+      final grown = applyFieldsEvent(
+        const CardFieldsSnapshot(),
+        const FieldsConsentHeight(88),
+      );
+
+      expect(grown.withMessage('Card declined').consentHeight, 88);
+      expect(grown.withMessage(null).consentHeight, 88);
+    });
+  });
+
   group('a box nobody has typed into', () {
     test('is not ready, and has nothing chargeable in it', () {
       const snapshot = CardFieldsSnapshot();

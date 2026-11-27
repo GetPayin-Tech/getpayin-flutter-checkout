@@ -6,6 +6,28 @@ import 'package:getpayin_checkout/getpayin_checkout.dart';
 import 'support/fixtures.dart';
 
 void main() {
+  group('the consent row saying how tall it is', () {
+    test('is read as the height it reports', () {
+      final event = parseFieldsEvent('{"type":"consentheight","pixels":88}');
+
+      expect(event, isA<FieldsConsentHeight>());
+      expect((event! as FieldsConsentHeight).pixels, 88);
+    });
+
+    test('is nothing to the box when the page says no number', () {
+      final event = parseFieldsEvent('{"type":"consentheight"}');
+
+      expect((event! as FieldsConsentHeight).pixels, 0);
+    });
+
+    test('says so in a line for the log', () {
+      expect(
+        describeFieldsEvent(const FieldsConsentHeight(88)),
+        'consent height 88',
+      );
+    });
+  });
+
   group('parseFieldsEvent', () {
     test('reads the gateway price the fields mounted with', () {
       final event = parseFieldsEvent(

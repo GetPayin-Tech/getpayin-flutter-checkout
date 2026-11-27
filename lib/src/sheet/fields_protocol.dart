@@ -141,6 +141,19 @@ class FieldsError extends FieldsEvent {
   final String? attempt;
 }
 
+/// How tall the consent row has become on the page.
+///
+/// The only row of the box whose height the host cannot work out for itself: PayLink frames
+/// the row, and its wording wraps to a second line in some languages. Everything else in
+/// the box is a row of the height the sheet asked for.
+class FieldsConsentHeight extends FieldsEvent {
+  /// Creates the height event.
+  const FieldsConsentHeight(this.pixels);
+
+  /// The row's height in CSS pixels, which are the sheet's own logical pixels.
+  final int pixels;
+}
+
 /// The wallet button is rendered and can be tapped.
 class FieldsWalletReady extends FieldsEvent {
   /// Creates the wallet-ready event.
@@ -207,6 +220,7 @@ FieldsEvent? parseFieldsEvent(String raw) {
         message: _stringAt(decoded, 'message'),
         attempt: _stringAt(decoded, 'attempt'),
       ),
+    'consentheight' => FieldsConsentHeight(_intAt(decoded, 'pixels') ?? 0),
     'walletready' => FieldsWalletReady(
         (decoded['paymentTypes'] as List<Object?>? ?? const <Object?>[])
             .whereType<String>()
@@ -296,6 +310,7 @@ String describeFieldsEvent(FieldsEvent event) {
           '${message == null ? '' : ': $message'}',
     FieldsError(:final failure, :final message) =>
       'error ${failure.wireName}${message == null ? '' : ': $message'}',
+    FieldsConsentHeight(:final pixels) => 'consent height $pixels',
     FieldsWalletReady(:final paymentTypes) =>
       'wallet ready ${paymentTypes.join(',')}',
     FieldsWalletError(:final message) =>

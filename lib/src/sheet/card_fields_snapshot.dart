@@ -25,6 +25,7 @@ class CardFieldsSnapshot {
     this.cardholderName,
     this.chargeStarted = false,
     this.valid = const <String>{},
+    this.consentHeight = 0,
   });
 
   /// True once the fields are live and the gateway has priced the payment.
@@ -66,6 +67,12 @@ class CardFieldsSnapshot {
   /// The fields holding something chargeable, by the name the page calls them.
   final Set<String> valid;
 
+  /// How tall the consent row is on the page, once it has said.
+  ///
+  /// Zero until then, and zero for a box without one. Every other row is the height the
+  /// sheet asked for; this one is PayLink's own, and its wording wraps in some languages.
+  final int consentHeight;
+
   /// True when every field in the box holds something chargeable and the box is live.
   bool get isComplete => ready && valid.containsAll(_chargeable);
 
@@ -88,6 +95,7 @@ class CardFieldsSnapshot {
     String? cardholderName,
     bool? chargeStarted,
     Set<String>? valid,
+    int? consentHeight,
   }) {
     return CardFieldsSnapshot(
       ready: ready ?? this.ready,
@@ -99,6 +107,7 @@ class CardFieldsSnapshot {
       cardholderName: cardholderName ?? this.cardholderName,
       chargeStarted: chargeStarted ?? this.chargeStarted,
       valid: valid ?? this.valid,
+      consentHeight: consentHeight ?? this.consentHeight,
     );
   }
 
@@ -114,6 +123,7 @@ class CardFieldsSnapshot {
       cardholderName: cardholderName,
       chargeStarted: chargeStarted,
       valid: valid,
+      consentHeight: consentHeight,
     );
   }
 }
@@ -152,6 +162,8 @@ CardFieldsSnapshot applyFieldsEvent(
     FieldsError(:final message) => snapshot
         .copyWith(charging: false, authenticating: false)
         .withMessage(message),
+    FieldsConsentHeight(:final pixels) =>
+      snapshot.copyWith(consentHeight: pixels),
     FieldsWalletReady() || FieldsWalletError() => snapshot,
   };
 }

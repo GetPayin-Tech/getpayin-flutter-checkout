@@ -146,6 +146,9 @@ class CardFieldsController extends ChangeNotifier {
   /// True when every field in the box holds something chargeable.
   bool get isComplete => _snapshot.isComplete;
 
+  /// How tall the consent row is on the page, or zero before it has said.
+  int get consentHeight => _snapshot.consentHeight;
+
   /// Charges the card in the box.
   ///
   /// Does nothing while a charge is already running: PayLink refuses the second one with
