@@ -260,8 +260,10 @@ says how they fit together.
 | `PayLinkFieldsSession`           | The payment, as `/init` described it.                                                                                                               |
 
 A `FieldsEvent` is one of `FieldsReady`, `FieldsChanged`, `FieldsAuthenticating`,
-`FieldsCharging`, `FieldsPayment`, `FieldsError`, `FieldsWalletReady` and
-`FieldsWalletError`.
+`FieldsCharging`, `FieldsPayment`, `FieldsError`, `FieldsConsentHeight`,
+`FieldsWalletReady` and `FieldsWalletError`. `FieldsConsentHeight` carries how tall the
+consent row has become: PayLink frames that row and words it, so it is the one row of the
+box whose height the sheet cannot work out for itself.
 
 `WalletSurface` reports through four callbacks. `onCharging` says its charge is out;
 `onChargingAfterLeaving`, the same after the button left the screen; `onUnavailable`, that the

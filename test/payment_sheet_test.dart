@@ -52,6 +52,7 @@ void main() {
     Future<CheckoutResult> Function(SavedCard card)? chargeSavedCard,
     bool fallBackToHostedCheckout = true,
     bool collectBillingAddress = false,
+    bool keepTheCard = false,
     void Function(FieldsError error)? onHandover,
     void Function(String note)? onDiagnostic,
     Duration successPause = Duration.zero,
@@ -60,6 +61,7 @@ void main() {
   }) {
     return PaymentSheetConfiguration(
       collectBillingAddress: collectBillingAddress,
+      keepTheCard: keepTheCard,
       onHandover: onHandover,
       onDiagnostic: onDiagnostic,
       successPause: successPause,
@@ -871,6 +873,48 @@ void main() {
       reason:
           'the home indicator inset sits under the sheet, inside its height',
     );
+  });
+
+  /*
+   * Every row of the box is the height the sheet asked for, except the one PayLink frames
+   * and words: consent wraps to a second line in some languages. The box is a fixed height
+   * around a web view, so a row that grew without the box growing with it would put its
+   * tick below the fold, and the pay button would refuse with nothing on screen saying why.
+   */
+  testWidgets('grows the card box when the consent row says it is taller',
+      (tester) async {
+    await openSheet(tester, configuration(keepTheCard: true));
+
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+
+    final before = tester.getSize(find.byType(CardBox)).height;
+
+    postToCard(<String, Object?>{'type': 'consentheight', 'pixels': 96});
+    await pumpFrames(tester);
+
+    final after = tester.getSize(find.byType(CardBox)).height;
+
+    expect(
+      after - before,
+      96 - const PaymentSheetStyle().rowHeight,
+      reason: 'the box grows by what the row grew by, and no more',
+    );
+  });
+
+  testWidgets('leaves the box alone when the row fits the height it was given',
+      (tester) async {
+    await openSheet(tester, configuration(keepTheCard: true));
+
+    await tester.tap(find.text(const PaymentSheetStrings().newCard));
+    await pumpFrames(tester);
+
+    final before = tester.getSize(find.byType(CardBox)).height;
+
+    postToCard(<String, Object?>{'type': 'consentheight', 'pixels': 56});
+    await pumpFrames(tester);
+
+    expect(tester.getSize(find.byType(CardBox)).height, before);
   });
 
   testWidgets('offers no wallet when none belongs on this phone',

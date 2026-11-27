@@ -1415,7 +1415,24 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     final rows =
         (_config.collectBillingAddress ? 3 : 2) + (_config.keepTheCard ? 1 : 0);
 
-    return _config.style.rowHeight * rows + _boxBorders(rows);
+    return _config.style.rowHeight * rows + _boxBorders(rows) + _consentGrowth;
+  }
+
+  /// What the consent row needs beyond the row the box was drawn for.
+  ///
+  /// Every other row is the height the sheet asked for. This one is PayLink's, framed and
+  /// worded by them, and in some languages it wraps to a second line. The box is a fixed
+  /// height around a web view, so a row that grew without the box growing with it would
+  /// have its tick below the fold, with the pay button refusing and nothing on screen
+  /// saying why. Zero until the page says, and zero for a box with no such row.
+  double get _consentGrowth {
+    if (!_config.keepTheCard) {
+      return 0;
+    }
+
+    final grown = _card.consentHeight - _config.style.rowHeight;
+
+    return grown > 0 ? grown : 0;
   }
 
   /// Every hairline the box draws: one between each pair of rows, and its own two edges.

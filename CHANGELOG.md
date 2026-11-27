@@ -13,6 +13,10 @@ All notable changes to this package are documented here. The format follows
   payer was told the checkout needed an app their phone could not open — for a step that
   needed no app at all. The page is held to the rule a fallback page is held to, so such a
   link still reaches nothing a plain link could not.
+- The card box grows with the consent row when PayLink's framed row is taller than a row of
+  the sheet's own, which it is where the wording wraps to a second line. The box is a fixed
+  height around a web view, so the tick sat below the fold and the pay button refused with
+  nothing on screen saying why. The page reports the row's height and the box takes it.
 
 - The payment sheet ends when the card page loads again while a charge is running, instead
   of waiting for an answer that can no longer reach it. The page that sent the charge is

@@ -31,6 +31,7 @@ export 'src/sheet/fields_protocol.dart'
         FieldsAuthenticating,
         FieldsCharging,
         FieldsChanged,
+        FieldsConsentHeight,
         FieldsError,
         FieldsEvent,
         FieldsPayment,

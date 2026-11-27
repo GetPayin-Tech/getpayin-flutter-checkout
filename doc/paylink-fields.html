@@ -138,6 +138,27 @@
    */
   var pageKey = null;
 
+  /* The consent row is the only row whose height the host cannot know: PayLink frames it,
+     and wording that wraps -- as it does in Arabic -- makes it taller than a row. The box
+     the host draws is a fixed height, so a row that grew without saying so would have its
+     tick below the fold of a web view nobody can scroll to. */
+  function watchConsentHeight(box) {
+    if (!box || typeof window.ResizeObserver !== 'function') {
+      return;
+    }
+
+    var said = 0;
+
+    new window.ResizeObserver(function () {
+      var tall = Math.ceil(box.getBoundingClientRect().height);
+
+      if (tall > 0 && tall !== said) {
+        said = tall;
+        post({ type: 'consentheight', pixels: tall });
+      }
+    }).observe(box);
+  }
+
   function post(message) {
     var channel = window[CHANNEL];
 
@@ -404,6 +425,7 @@
     if (config.collectConsent) {
       options.consent = '#consent';
       document.getElementById('consent').hidden = false;
+      watchConsentHeight(document.getElementById('consent'));
     }
 
     if (wallets.length > 0) {
