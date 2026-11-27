@@ -8,6 +8,11 @@ All notable changes to this package are documented here. The format follows
 
 ### Fixed
 
+- A saved card could be charged after a wallet the payer opened had gone quiet. The sheet
+  lets go 15 seconds after the payer comes back with no charge started, and that hold now
+  releases the card form only: a saved card is charged on an invoice of its own, so a slow
+  wallet charge landing after it would be a second payment for the same order, which no
+  per-invoice rule can refuse. The card form pays this invoice and stays open.
 - A checkout opened without `expectedInvoiceId` took a return link for any invoice. It now
   binds to the invoice its own `checkout_url` names, which `/init` always puts there, so a
   link for another invoice is passed over and the checkout goes on waiting for its own. This
