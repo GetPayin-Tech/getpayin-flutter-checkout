@@ -2459,8 +2459,6 @@ void main() {
 
       final wallet = walletSurface();
 
-      await visitTheWallet(tester);
-      await tester.pump(const Duration(seconds: 15));
       await tester.tap(find.text(r'Pay $97.42'));
       await pumpFrames(tester);
       wallet.changeUrl('$testFieldsPageUrl#paylink-charging');
