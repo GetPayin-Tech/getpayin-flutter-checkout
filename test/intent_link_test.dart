@@ -32,6 +32,41 @@ void main() {
       expect(targets?.web, 'https://bank.example/3ds?ref=1');
     });
 
+    /*
+     * An `intent:` whose own scheme is https names a page, not an app. Chrome loads it, and
+     * the checkout can too: it is held to the same rule a fallback page is. Refusing it
+     * told the payer their phone was missing an app for a step that needed no app at all.
+     */
+    test('loads an intent link whose target is a page', () {
+      final targets = readIntentTargets(
+        'intent://bank.example/approve#Intent;scheme=https;package=com.bank;end',
+        context,
+      );
+
+      expect(targets?.web, 'https://bank.example/approve');
+      expect(targets?.app, isNull, reason: 'a page is not an app to open');
+    });
+
+    test('keeps the fallback the link names over its own target', () {
+      final targets = readIntentTargets(
+        'intent://bank.example/approve#Intent;scheme=https;'
+        'S.browser_fallback_url=https%3A%2F%2Fbank.example%2Fsorry;end',
+        context,
+      );
+
+      expect(targets?.web, 'https://bank.example/sorry');
+    });
+
+    test('refuses a target that is not a page the checkout may load', () {
+      expect(
+        readIntentTargets(
+          'intent://x#Intent;scheme=javascript;end',
+          context,
+        )?.web,
+        isNull,
+      );
+    });
+
     test('refuses an app the checkout may not open', () {
       for (final scheme in <String>['sms', 'market', 'myapp', 'intent']) {
         expect(

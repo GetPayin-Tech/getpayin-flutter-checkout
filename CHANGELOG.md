@@ -8,6 +8,11 @@ All notable changes to this package are documented here. The format follows
 
 ### Fixed
 
+- An Android `intent:` link whose own target is a web page is loaded in the checkout rather
+  than refused. A bank step can send one with `scheme=https` and no fallback page, and the
+  payer was told the checkout needed an app their phone could not open — for a step that
+  needed no app at all. The page is held to the rule a fallback page is held to, so such a
+  link still reaches nothing a plain link could not.
 - The card box grows with the consent row when PayLink's framed row is taller than a row of
   the sheet's own, which it is where the wording wraps to a second line. The box is a fixed
   height around a web view, so the tick sat below the fold and the pay button refused with
