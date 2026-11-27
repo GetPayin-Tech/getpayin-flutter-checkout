@@ -139,6 +139,26 @@ void main() {
     });
   });
 
+  group('the SDK addresses the page will load', () {
+    test('are written the way the page writes them back', () {
+      final page = buildFieldsPageHtml(
+        sdkUrl: 'https://pay.example.test//sdk/paylink-fields-v1.js',
+        otherSdkUrls: const <String>['https://dev.example.test'],
+      );
+
+      expect(
+        page,
+        contains('"https://pay.example.test/sdk/paylink-fields-v1.js"'),
+        reason: 'a host given with a trailing slash doubles the one before sdk',
+      );
+      expect(
+        page,
+        contains('"https://dev.example.test/"'),
+        reason: 'URL reports no path as a slash, so this side has to as well',
+      );
+    });
+  });
+
   group('paylinkSdkUrl', () {
     test('names the SDK on a PayLink host, with or without a closing slash',
         () {

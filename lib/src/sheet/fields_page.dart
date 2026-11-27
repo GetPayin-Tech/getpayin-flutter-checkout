@@ -308,7 +308,9 @@ String buildFieldsPageHtml({
     try {
       var parsed = new URL(url, window.location.href);
 
-      return KNOWN_SDKS.indexOf(parsed.origin + parsed.pathname) === -1 ? null : parsed.href;
+      var path = (parsed.pathname || '/').replace(new RegExp('/{2,}', 'g'), '/');
+
+      return KNOWN_SDKS.indexOf(parsed.origin + path) === -1 ? null : parsed.href;
     } catch (error) {
       return null;
     }
@@ -608,8 +610,17 @@ String _addressAndPath(String url) {
     return url;
   }
 
-  return '${uri.origin}${uri.path}';
+  return '${uri.origin}${_normalPath(uri.path)}';
 }
+
+/// A path written the one way both sides of the comparison write it.
+///
+/// The page builds its half with `URL`, which reports no path as `/`, and a host given to
+/// `write_fields_page.dart` with a trailing slash doubles the one in front of `sdk`. Either
+/// way the two halves of the same address would not match, and the payer would get a page
+/// that quietly shows no wallet.
+String _normalPath(String path) =>
+    path.isEmpty ? '/' : path.replaceAll(RegExp('/{2,}'), '/');
 
 /// The URL the wallet surface is loaded with.
 ///

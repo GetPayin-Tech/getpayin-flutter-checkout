@@ -360,6 +360,13 @@ const Duration _walletGrace = Duration(seconds: 15);
 /// longer. Anything else the payer leaves for — a notification, a call — holds nothing.
 const Duration _walletTouchWindow = Duration(seconds: 10);
 
+/// How far a pointer may travel and still count as a tap on the wallet button.
+///
+/// Flutter's own touch slop, written here rather than imported: this is the sheet's rule
+/// for what it treats as the payer reaching for the wallet, and it should not move when a
+/// gesture constant does.
+const double _walletTapSlop = 18;
+
 class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
   late final PaymentSheetConfiguration _config = widget.configuration;
 
@@ -574,8 +581,26 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     setState(() => _walletUnavailable = true);
   }
 
-  /// Notes a touch on the wallet button, for [_onLifecycle] to read.
-  void _onWalletTouched() {
+  /// Where a touch on the wallet row went down, until it is lifted or cancelled.
+  ///
+  /// The row is a web view: the tap that opens the wallet happens inside it, where nothing
+  /// here can see it. A pointer going down over the row is the whole signal there is, and
+  /// taking that alone counted the start of a scroll as a wallet the payer had opened —
+  /// enough to hold the sheet, turn saved cards off for the rest of it, and report a
+  /// deliberate close as unconfirmed. A tap is a pointer that goes down and comes up
+  /// without travelling, which is the most this side can tell.
+  Offset? _walletPointerAt;
+
+  /// Notes a tap on the wallet button, for [_onLifecycle] to read.
+  void _onWalletTouched(Offset at) {
+    final from = _walletPointerAt;
+
+    _walletPointerAt = null;
+
+    if (from == null || (at - from).distance > _walletTapSlop) {
+      return;
+    }
+
     _walletTouched = true;
     _walletTouchExpiry?.cancel();
     _walletTouchExpiry =
@@ -1241,7 +1266,9 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
       ),
       child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) => _onWalletTouched(),
+        onPointerDown: (event) => _walletPointerAt = event.position,
+        onPointerUp: (event) => _onWalletTouched(event.position),
+        onPointerCancel: (_) => _walletPointerAt = null,
         child: WalletSurface(
           key: ValueKey<int>(_walletAttempt),
           session: _config.session,

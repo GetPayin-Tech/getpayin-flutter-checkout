@@ -8,6 +8,16 @@ All notable changes to this package are documented here. The format follows
 
 ### Fixed
 
+- A drag that begins on the wallet button no longer counts as the payer opening the wallet.
+  The row is a web view and the tap inside it cannot be seen from here, so a pointer going
+  down over it was taken as the wallet being reached for: a scroll started there, followed
+  by a notification or a call, held the sheet, turned saved cards off for the rest of it and
+  reported a deliberate close as `outcomeUnknown`. It now takes a pointer that goes down and
+  comes up without travelling.
+- The addresses the card page will load an SDK from are written the way the page writes them
+  back when comparing, so a host given to `write_fields_page.dart` with a trailing slash, or
+  one with no path at all, no longer leaves the payer a page that quietly shows no wallet.
+
 - An Android `intent:` link whose own target is a web page is loaded in the checkout rather
   than refused. A bank step can send one with `scheme=https` and no fallback page, and the
   payer was told the checkout needed an app their phone could not open — for a step that

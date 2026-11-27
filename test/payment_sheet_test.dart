@@ -2397,6 +2397,80 @@ void main() {
      * answered and a saved card charged after it are two payments for one order, with the
      * sheet reporting one.
      */
+    testWidgets('is not opened by a drag that began on its button',
+        (tester) async {
+      final charged = <String>[];
+
+      final pending = await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (card) async {
+            charged.add(card.id);
+
+            return const CheckoutResult(status: CheckoutStatus.paid);
+          },
+        ),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.dragFrom(
+        tester.getCenter(find.byType(WalletSurface)),
+        const Offset(0, 60),
+      );
+      await tester.pump();
+      await leaveTheApp(tester);
+      await pumpFrames(tester);
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(
+        charged,
+        <String>['pm_1'],
+        reason: 'a scroll begun on the row is not a wallet the payer opened',
+      );
+      expect(settled?.status, CheckoutStatus.paid);
+    });
+
+    testWidgets('is not opened by a touch the system takes back',
+        (tester) async {
+      final charged = <String>[];
+
+      await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (card) async {
+            charged.add(card.id);
+
+            return const CheckoutResult(status: CheckoutStatus.paid);
+          },
+        ),
+      );
+
+      final touch = await tester.startGesture(
+        tester.getCenter(find.byType(WalletSurface)),
+      );
+
+      await touch.cancel();
+      await tester.pump();
+      await leaveTheApp(tester);
+      await pumpFrames(tester);
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(
+        charged,
+        <String>['pm_1'],
+        reason: 'a touch the system took back opened no wallet',
+      );
+    });
+
     testWidgets('leaves a saved card off once the hold has let go',
         (tester) async {
       final charged = <String>[];
