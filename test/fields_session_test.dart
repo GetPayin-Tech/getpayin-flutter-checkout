@@ -75,8 +75,8 @@ void main() {
 
       data['tokenizationId'] = '6c7291e89b594';
 
-      expect(PayLinkFieldsSession.fromInit(data)?.tokenizationId,
-          '6c7291e89b594');
+      expect(
+          PayLinkFieldsSession.fromInit(data)?.tokenizationId, '6c7291e89b594');
     });
 
     test('was opened for no save when /init named none', () {

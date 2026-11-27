@@ -941,8 +941,8 @@ void main() {
       ),
     );
 
-    expect(notes.where((note) => note.startsWith('card save not asked')),
-        isEmpty);
+    expect(
+        notes.where((note) => note.startsWith('card save not asked')), isEmpty);
   });
 
   testWidgets('says nothing about a save for a payment opened without one',
@@ -951,8 +951,8 @@ void main() {
 
     await openSheet(tester, configuration(onDiagnostic: notes.add));
 
-    expect(notes.where((note) => note.startsWith('card save not asked')),
-        isEmpty);
+    expect(
+        notes.where((note) => note.startsWith('card save not asked')), isEmpty);
   });
 
   testWidgets('leaves the box alone when the row fits the height it was given',
