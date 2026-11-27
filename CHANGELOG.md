@@ -8,6 +8,12 @@ All notable changes to this package are documented here. The format follows
 
 ### Fixed
 
+- The payment sheet ends when the card page loads again while a charge is running, instead
+  of waiting for an answer that can no longer reach it. The page that sent the charge is
+  gone and the one replacing it knows nothing of it, so the payer was left on an empty card
+  form with Pay off and Back refused. It settles by the same rule as any other failure of
+  the box: `outcomeUnknown` once the gateway had the charge, nothing charged before that.
+
 - A saved card could be charged after a wallet the payer opened had gone quiet. The sheet
   lets go 15 seconds after the payer comes back with no charge started, and that hold now
   releases the card form only: a saved card is charged on an invoice of its own, so a slow
