@@ -46,6 +46,50 @@ void main() {
     );
   }
 
+  /*
+   * The same rule as the browser sheet's: a checkout link names its invoice, so a screen
+   * opened without one still knows which invoice it is for, and a link for another is not
+   * its answer.
+   */
+  testWidgets('passes over a link for another invoice the checkout link names',
+      (tester) async {
+    await mountApp(tester);
+
+    final pending = GetPayInCheckout.open(
+      testCheckoutUrlFor(4512),
+      const OpenCheckoutOptions(
+        returnUrl: testReturnUrl,
+        presentation: CheckoutPresentation.inApp,
+      ),
+    );
+
+    await pumpFrames(tester);
+    webView.finishLoading();
+    await pumpFrames(tester);
+
+    final passedOver = await webView.navigate(
+      returnLink('success=1&invoice_id=9999&invoice_status=PAID'),
+    );
+
+    await pumpFrames(tester);
+
+    expect(
+      passedOver,
+      NavigationDecision.prevent,
+      reason: 'a link on the return address never loads in the checkout',
+    );
+
+    await webView.navigate(
+      returnLink('success=1&invoice_id=4512&invoice_status=PAID'),
+    );
+    await pumpFrames(tester);
+
+    final result = await pending;
+
+    expect(result.status, CheckoutStatus.paid);
+    expect(result.invoiceId, '4512');
+  });
+
   testWidgets('shows the checkout and completes with what the return link said',
       (tester) async {
     await mountApp(tester);

@@ -149,10 +149,12 @@ That one is a double tap on Pay, which is worth ignoring rather than reporting. 
 common one. Either guard the button with
 `GetPayInCheckout.busy`, or catch and ignore `GetPayInSessionBusyError` as above.
 
-One mistake the package cannot catch: `expectedInvoiceId: null` means "no invoice to bind
-to", and a field your server left out of its JSON arrives as exactly that. Dart cannot tell
-the two apart, so make your server always send the invoice id, or check for it before you
-call `open()`. Anything else unusable — `''`, a `bool`, a `Map`, a fractional number — is
+`expectedInvoiceId: null` means "no invoice to bind to", and a field your server left out
+of its JSON arrives as exactly that — Dart cannot tell the two apart. The checkout then
+binds to the invoice its own `checkout_url` names, which `/init` always puts there, so a
+link for another invoice is still passed over. Send the id anyway where you have it: it is
+the one your server raised the invoice with, and a link built some other way may name none.
+Anything else unusable — `''`, a `bool`, a `Map`, a fractional number — is
 refused with `GetPayInConfigError` rather than quietly turning the check off.
 
 ## Retrying

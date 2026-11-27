@@ -115,6 +115,33 @@ void main() {
       expect(result.invoiceId, 'INV-REAL');
     });
 
+    test('waits past another invoice when only the checkout link names one',
+        () async {
+      final phone = FakePhone(
+        onOpened: (phone) {
+          phone.deliver(
+            returnLink('success=1&invoice_id=INV-OTHER&invoice_status=PAID'),
+          );
+          phone.deliver(
+            returnLink('success=1&invoice_id=4512&invoice_status=PAID'),
+          );
+        },
+      );
+
+      final result = await runBrowserCheckout(
+        testRequest(checkoutUrl: testCheckoutUrlFor(4512)),
+        ports: phone.ports,
+      );
+
+      expect(result.status, CheckoutStatus.paid);
+      expect(
+        result.invoiceId,
+        '4512',
+        reason: 'the checkout link named the invoice, so the link for another '
+            'is not this checkout answering',
+      );
+    });
+
     /*
      * On Android any link to the app brings it to the front, which reads as the payer
      * closing the sheet. After a link the sheet passed over, the payer may still be paying
