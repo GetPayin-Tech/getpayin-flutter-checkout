@@ -4,6 +4,16 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the package follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A saved card could be charged after a wallet the payer opened had gone quiet. The sheet
+  lets go 15 seconds after the payer comes back with no charge started, and that hold now
+  releases the card form only: a saved card is charged on an invoice of its own, so a slow
+  wallet charge landing after it would be a second payment for the same order, which no
+  per-invoice rule can refuse. The card form pays this invoice and stays open.
+
 ## 0.2.0
 
 The first version on pub.dev. Version 0.1.0 was tagged in the repository but never

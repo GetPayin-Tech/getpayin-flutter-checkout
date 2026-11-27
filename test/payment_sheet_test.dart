@@ -2304,6 +2304,49 @@ void main() {
       expect(find.text(strings.addNewCard), findsOneWidget);
     });
 
+    /*
+     * Letting go is for the card form, which pays this invoice and which PayLink refuses to
+     * charge twice. A saved card is charged on an invoice of its own, so a wallet that never
+     * answered and a saved card charged after it are two payments for one order, with the
+     * sheet reporting one.
+     */
+    testWidgets('leaves a saved card off once the hold has let go',
+        (tester) async {
+      final charged = <String>[];
+
+      await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (card) async {
+            charged.add(card.id);
+
+            return const CheckoutResult(status: CheckoutStatus.paid);
+          },
+        ),
+      );
+
+      await visitTheWallet(tester);
+      await tester.pump(const Duration(seconds: 16));
+      await pumpFrames(tester);
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(
+        charged,
+        isEmpty,
+        reason:
+            'the wallet it opened can still charge, on an invoice of its own',
+      );
+      expect(
+        find.text(strings.newCard),
+        findsOneWidget,
+        reason:
+            'the card form pays this invoice, so it stays open to the payer',
+      );
+    });
+
     testWidgets('closing after a wallet that never answered is unconfirmed',
         (tester) async {
       final pending = await openSheet(tester, configuration());
