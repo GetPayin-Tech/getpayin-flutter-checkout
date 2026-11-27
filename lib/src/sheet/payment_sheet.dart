@@ -258,17 +258,20 @@ class GetPayInPaymentSheet extends StatefulWidget {
 
     final exit = _SheetExit();
     final outcome = await checkoutGuard.run(
-      () => showModalBottomSheet<_SheetOutcome>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: const Color(0x00000000),
-        barrierColor: const Color(0x66000000),
-        enableDrag: false,
-        builder: (_) => GetPayInPaymentSheet._shown(
-          configuration: configuration,
-          exit: exit,
+      () => Future.any<_SheetOutcome?>(<Future<_SheetOutcome?>>[
+        exit.gone.future.then((_) => null),
+        showModalBottomSheet<_SheetOutcome>(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: const Color(0x00000000),
+          barrierColor: const Color(0x66000000),
+          enableDrag: false,
+          builder: (_) => GetPayInPaymentSheet._shown(
+            configuration: configuration,
+            exit: exit,
+          ),
         ),
-      ),
+      ]),
     );
 
     return switch (outcome) {
@@ -290,6 +293,21 @@ class GetPayInPaymentSheet extends StatefulWidget {
 class _SheetExit {
   /// Answers what an empty pop means right now.
   CheckoutResult Function()? meaning;
+
+  /// Completes when the sheet went without its route ever answering.
+  ///
+  /// A route answers when it is popped. An app that leaves the navigator the sheet was
+  /// opened from — a shell route, a tab, a `MaterialApp` rebuilt on sign-out — takes the
+  /// route with it and pops nothing, so the future `show()` is waiting on would stay
+  /// pending for the rest of the process, with the one-checkout guard held behind it.
+  final Completer<void> gone = Completer<void>();
+
+  /// Reports the sheet gone, which only the first report means anything.
+  void reportGone() {
+    if (!gone.isCompleted) {
+      gone.complete();
+    }
+  }
 }
 
 /// What the sheet closed with.
@@ -459,8 +477,16 @@ class _GetPayInPaymentSheetState extends State<GetPayInPaymentSheet> {
     _lifecycle = AppLifecycleListener(onStateChange: _onLifecycle);
   }
 
+  /// Lets [GetPayInPaymentSheet.show] answer when the sheet goes without being closed.
+  ///
+  /// Only when it settled nothing itself: a sheet that popped with an answer, or that the
+  /// payer closed, has already told `show()` what happened, and the route carries that.
   @override
   void dispose() {
+    if (!_finished) {
+      widget._exit.reportGone();
+    }
+
     _walletRelease?.cancel();
     _walletTouchExpiry?.cancel();
     _lifecycle.dispose();

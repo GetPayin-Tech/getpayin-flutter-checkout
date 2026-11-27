@@ -4,6 +4,16 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the package follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- The payment sheet answers when the app takes away the navigator it was opened from — a
+  shell route, a tab, or a `MaterialApp` rebuilt on sign-out. Nothing pops the route then,
+  so `GetPayInPaymentSheet.show` waited for an answer that could not come and the
+  one-checkout guard stayed held for the rest of the process. It now settles the way closing
+  does: `outcomeUnknown` while a charge is out, cancelled otherwise.
+
 ## 0.2.0
 
 The first version on pub.dev. Version 0.1.0 was tagged in the repository but never
