@@ -388,7 +388,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         '${body['message'] ?? body['error'] ?? body['success']}');
 
     if (body['challenge_url'] case final String challenge) {
-      _say('issuer wants the payer: $challenge');
+      _say("over to the payer's browser: $challenge");
 
       return readSavedCardChallenge(
         await GetPayInCheckout.open(
