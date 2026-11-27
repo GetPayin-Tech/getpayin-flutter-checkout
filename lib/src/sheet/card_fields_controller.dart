@@ -426,7 +426,6 @@ class CardFieldsController extends ChangeNotifier {
       );
 
   /// Whether [event] answers a charge this box never started.
-
   ///
   /// The channel is shared with everything the page frames, and neither platform names the
   /// sender of a message. So the box reports one payment only: the one it asked for, while
