@@ -917,36 +917,6 @@ void main() {
     expect(tester.getSize(find.byType(CardBox)).height, before);
   });
 
-  /*
-   * The box marks itself charging when the page says a charge has gone out. A mark arriving
-   * when the box asked for no charge is about no charge of its own: taken, it would leave
-   * the box charging for an answer that cannot come, Pay refusing, and the sheet closable
-   * only as unconfirmed.
-   */
-  testWidgets('ignores a charge mark for a charge it never asked for',
-      (tester) async {
-    final pending = await openSheet(tester, configuration());
-
-    await tester.tap(find.text(const PaymentSheetStrings().newCard));
-    await pumpFrames(tester);
-    await completeTheCard(tester);
-
-    postToCard(<String, Object?>{'type': 'charging'});
-    await pumpFrames(tester);
-
-    await tester.tap(find.byTooltip(const PaymentSheetStrings().close));
-    await pumpFrames(tester);
-
-    final settled = await pending;
-
-    expect(
-      settled.status,
-      CheckoutStatus.cancelled,
-      reason: 'nothing was charged, so closing is the payer leaving',
-    );
-    expect(settled.code, isNull);
-  });
-
   testWidgets('offers no wallet when none belongs on this phone',
       (tester) async {
     await openSheet(

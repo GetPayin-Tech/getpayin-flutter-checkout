@@ -14,9 +14,6 @@ All notable changes to this package are documented here. The format follows
   by a notification or a call, held the sheet, turned saved cards off for the rest of it and
   reported a deliberate close as `outcomeUnknown`. It now takes a pointer that goes down and
   comes up without travelling.
-- A charge mark or an issuer's check for a charge the card box never asked for is refused,
-  as its answer already was. Taken, it left the box charging for an answer that could not
-  come, with Pay refusing and the sheet closable only as unconfirmed.
 - The addresses the card page will load an SDK from are written the way the page writes them
   back when comparing, so a host given to `write_fields_page.dart` with a trailing slash, or
   one with no path at all, no longer leaves the payer a page that quietly shows no wallet.

@@ -426,11 +426,7 @@ class CardFieldsController extends ChangeNotifier {
       );
 
   /// Whether [event] answers a charge this box never started.
-  ///
-  /// A charge mark and an issuer's check belong to a charge as much as an answer does: the
-  /// box sets a code when it asks the page to pay, and a mark arriving with no code set is
-  /// about no charge of this box's. Taken, it would leave the box charging for an answer
-  /// that cannot come, with Pay refusing and the sheet closable only as unconfirmed.
+
   ///
   /// The channel is shared with everything the page frames, and neither platform names the
   /// sender of a message. So the box reports one payment only: the one it asked for, while
@@ -446,7 +442,6 @@ class CardFieldsController extends ChangeNotifier {
           !_snapshot.charging || _attempt == null || attempt != _attempt,
         FieldsError(:final attempt) =>
           _snapshot.charging && _attempt != null && attempt != _attempt,
-        FieldsCharging() || FieldsAuthenticating() => _attempt == null,
         _ => false,
       };
 
