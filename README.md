@@ -86,8 +86,8 @@ Future<void> pay(Order order) async {
 ```
 
 `result.status` is `paid`, `notPaid` or `cancelled`. Pass `expectedInvoiceId` whenever your
-server gave you one: leaving it null turns off the check that a paid link belongs to *this*
-invoice. A `notPaid` the package decided for itself carries a `code`, which a genuine
+server gave you one: left null, the checkout falls back to the invoice its own
+`checkout_url` names, which is the same invoice by a shorter route. A `notPaid` the package decided for itself carries a `code`, which a genuine
 decline does not. See [Taking payments](doc/taking-payments.md#code-on-a-notpaid).
 
 > **The result in the app is not proof of payment.** Your return scheme is public, so

@@ -3,6 +3,10 @@ import 'package:getpayin_checkout/getpayin_checkout.dart';
 /// The return link every test opens a checkout with.
 const String testReturnUrl = 'myapp://payment-return';
 
+/// The checkout URL `/init` returns for [invoiceId], which always names it.
+String testCheckoutUrlFor(Object invoiceId) =>
+    '$testCheckoutUrl?invoice_id=$invoiceId';
+
 /// The checkout URL a server would hand the app.
 const String testCheckoutUrl = 'https://pay.getpayin.com/checkout/abc';
 
@@ -10,9 +14,12 @@ const String testCheckoutUrl = 'https://pay.getpayin.com/checkout/abc';
 String returnLink(String query) => '$testReturnUrl?$query';
 
 /// A request for the checkout the session tests present.
-CheckoutRequest testRequest({Object? expectedInvoiceId}) {
+CheckoutRequest testRequest({
+  Object? expectedInvoiceId,
+  String checkoutUrl = testCheckoutUrl,
+}) {
   return CheckoutRequest(
-    checkoutUrl: testCheckoutUrl,
+    checkoutUrl: checkoutUrl,
     options: OpenCheckoutOptions(
       returnUrl: testReturnUrl,
       expectedInvoiceId: expectedInvoiceId,

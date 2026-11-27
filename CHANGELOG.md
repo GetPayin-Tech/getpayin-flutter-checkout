@@ -4,6 +4,16 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the package follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A checkout opened without `expectedInvoiceId` took a return link for any invoice. It now
+  binds to the invoice its own `checkout_url` names, which `/init` always puts there, so a
+  link for another invoice is passed over and the checkout goes on waiting for its own. This
+  covers `GetPayInCheckout.open`, `GetPayInCheckout.saveCard` and `GetPayInCheckoutView`;
+  the payment sheet already bound to its session's invoice.
+
 ## 0.2.0
 
 The first version on pub.dev. Version 0.1.0 was tagged in the repository but never

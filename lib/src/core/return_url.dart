@@ -162,6 +162,39 @@ CheckoutResult _bindToInvoiceStatus(CheckoutResult result) {
   );
 }
 
+/// The invoice id a hosted URL names, so a run can be bound to the one it opened.
+///
+/// `POST /v2/integration/tokens/init` hands back a `tokenization_url` rather than an invoice
+/// id, and `/init` hands back both. Reading it off the URL is what lets a card save pass
+/// `expectedInvoiceId` and so refuse a return link that names another run.
+String? invoiceIdInCheckoutUrl(String url) {
+  final value = readQuery(parseUrl(url)?.query ?? '')['invoice_id']?.first;
+
+  return value == null || value.trim().isEmpty ? null : value.trim();
+}
+
+/// The invoice a checkout is bound to: the one the app named, or the one the link names.
+///
+/// A checkout link carries the invoice it was raised for — `/init` always puts it there —
+/// so a checkout opened without [expected] still knows which invoice it is for. Bound, it
+/// passes over a return link that names another invoice and goes on waiting for its own.
+///
+/// [expected] wins when it is given: it comes from the server that raised the invoice, and
+/// an integrator who passes one has said which invoice this checkout is for.
+///
+/// Null when neither names an invoice anything can read, which is the one case with nothing
+/// to check a link against. An unreadable id binds nothing rather than refusing every link:
+/// a checkout that can never be answered is worse than one that cannot tell two apart.
+Object? invoiceBoundTo(Object? expected, String checkoutUrl) {
+  if (expected != null) {
+    return expected;
+  }
+
+  final named = invoiceIdInCheckoutUrl(checkoutUrl);
+
+  return named != null && invoiceIdFrom(named) != null ? named : null;
+}
+
 /// What the link says, before any rule about what it is allowed to mean.
 ///
 /// A link whose fields cannot be read becomes not paid with

@@ -1,5 +1,6 @@
 import 'card_save.dart';
 import 'core/presentation.dart';
+import 'core/return_url.dart';
 import 'core/session_guard.dart';
 import 'core/validate.dart';
 import 'errors.dart';
@@ -77,9 +78,10 @@ abstract final class GetPayInCheckout {
   /// The token is not in the result and never reaches the app: it arrives on your server
   /// with the `card_token.created` webhook, which is also what makes the save real.
   ///
-  /// `options.expectedInvoiceId` is the verification's own invoice, which
-  /// [invoiceIdInCheckoutUrl] reads off the `tokenization_url` when your server did not pass
-  /// it on. Give the screen a title of its own: the payer is saving a card, not paying.
+  /// `options.expectedInvoiceId` is the verification's own invoice. Left null, it is read
+  /// off the `tokenization_url`, which names it — [invoiceIdInCheckoutUrl] is the same
+  /// reader, for a server that wants it before the run. Give the screen a title of its own:
+  /// the payer is saving a card, not paying.
   ///
   /// There is no payment-sheet equivalent, because `/tokens/init` hands back a hosted URL
   /// and no client token: a verification sells nothing, so the hold it places and the words
@@ -94,7 +96,8 @@ abstract final class GetPayInCheckout {
 
     return cardSaveFromCheckout(
       checkout,
-      expectedInvoiceId: options.expectedInvoiceId,
+      expectedInvoiceId:
+          invoiceBoundTo(options.expectedInvoiceId, tokenizationUrl),
     );
   }
 
