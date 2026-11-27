@@ -3400,7 +3400,14 @@ void main() {
       expect(settled?.code, CheckoutResultCode.outcomeUnknown);
     });
 
-    testWidgets('keeps holding when its page loads again mid-charge',
+    /*
+     * A page that loads again is a page that knows nothing of the charge the last one sent,
+     * so the answer the sheet is holding for can never arrive on it. Holding anyway left
+     * the payer on an empty card form with Pay off and Back refused, and only Close to end
+     * it. The sheet ends it instead, with the one result that is honest: what became of the
+     * charge is not known here.
+     */
+    testWidgets('ends unconfirmed when its page loads again mid-charge',
         (tester) async {
       final pending = await openSheet(tester, configuration());
 
@@ -3417,10 +3424,13 @@ void main() {
       await pumpFrames(tester);
       cardBox().navigation?.onPageStarted?.call(testFieldsPageUrl);
       await pumpFrames(tester);
-      await tester.binding.handlePopRoute();
-      await pumpFrames(tester);
 
-      expect(settled, isNull, reason: 'Back is refused while a charge is out');
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'the page that sent the charge is gone, so its answer cannot '
+            'reach this sheet',
+      );
     });
 
     testWidgets(

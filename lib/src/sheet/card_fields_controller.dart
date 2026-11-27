@@ -353,10 +353,29 @@ class CardFieldsController extends ChangeNotifier {
   ///
   /// A page that loads again has no fields until it is started and mounts them, and a box
   /// still saying "ready" would offer Pay on a page that cannot take the charge: the charge
-  /// would go nowhere and hold the sheet. Not while a charge is out: the sheet holds for its
-  /// answer whatever the page does, and closing then is unconfirmed.
+  /// would go nowhere and hold the sheet.
+  ///
+  /// A charge running when it loads again is a charge whose answer can no longer arrive:
+  /// the page that sent it is gone, and the one replacing it knows nothing about it. So it
+  /// is reported as a box that cannot run, and the sheet settles it by the same rule as
+  /// every other failure — unconfirmed once the gateway had the charge, nothing charged
+  /// before that. Holding instead left the payer on an empty form with Pay off and Back
+  /// refused, waiting for an answer nothing could send.
   void _pageLoading() {
-    if (_disposed || !isReady || isCharging || chargeStarted) {
+    if (_disposed) {
+      return;
+    }
+
+    if (isCharging || chargeStarted) {
+      _pageUnreachable(
+        'the page loaded again mid-charge',
+        'The card page loaded again while a charge was running.',
+      );
+
+      return;
+    }
+
+    if (!isReady) {
       return;
     }
 
