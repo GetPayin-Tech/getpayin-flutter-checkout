@@ -8,6 +8,12 @@ All notable changes to this package are documented here. The format follows
 
 ### Fixed
 
+- An Android `intent:` link whose own target is a web page is loaded in the checkout rather
+  than refused. A bank step can send one with `scheme=https` and no fallback page, and the
+  payer was told the checkout needed an app their phone could not open — for a step that
+  needed no app at all. The page is held to the rule a fallback page is held to, so such a
+  link still reaches nothing a plain link could not.
+
 - The payment sheet ends when the card page loads again while a charge is running, instead
   of waiting for an answer that can no longer reach it. The page that sent the charge is
   gone and the one replacing it knows nothing of it, so the payer was left on an empty card

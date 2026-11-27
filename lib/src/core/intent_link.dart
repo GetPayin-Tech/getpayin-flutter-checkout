@@ -24,10 +24,11 @@ const Set<String> _webSchemes = <String>{'https', 'http'};
 /// Reads an Android `intent:` link the way Chrome does, or null for any other link.
 ///
 /// A bank's 3-D Secure step can send one, and no app answers to `intent:` as written: the
-/// link names the app it is for, by its `scheme`, and the web page for when no app takes it,
-/// by `S.browser_fallback_url`. Both are held to [context]'s rules, so an `intent:` link
-/// reaches nothing a plain link could not: no refused app, none of the host app's own
-/// schemes, and as a fallback only an ordinary web page.
+/// link names what it is for by its `scheme` — an app, or a page where the scheme is
+/// `https` — and the web page for when no app takes it, by `S.browser_fallback_url`. All of
+/// them are held to [context]'s rules, so an `intent:` link reaches nothing a plain link
+/// could not: no refused app, none of the host app's own schemes, and as a page only an
+/// ordinary web page.
 IntentTargets? readIntentTargets(String url, NavigationContext context) {
   final link = url.trim();
 
@@ -41,15 +42,27 @@ IntentTargets? readIntentTargets(String url, NavigationContext context) {
     marker == -1 ? '' : link.substring(marker + _detailsMarker.length),
   );
   final scheme = details['scheme'];
-  final app = scheme == null || scheme.isEmpty
+  final target = scheme == null || scheme.isEmpty
       ? null
       : '$scheme:${body.substring('intent:'.length)}';
 
   return IntentTargets(
-    app: app != null && _opens(app, context) ? app : null,
-    web: _webPage(details['S.browser_fallback_url'], context),
+    app: target != null && _opens(target, context) ? target : null,
+    web: _webPage(details['S.browser_fallback_url'], context) ??
+        _webPageIn(target, context),
   );
 }
+
+/// [target] when the link names a page rather than an app, and the checkout may load it.
+///
+/// A `scheme` of `https` names a web page: there is no app to hand it to, and the payer
+/// was being told their phone was missing one. It is held to the same rule the fallback is,
+/// so an `intent:` link still reaches nothing a plain link could not.
+///
+/// After the fallback, never before it: a link that names both has named the page it wants
+/// loaded when its app is not there, and the app is not here.
+String? _webPageIn(String? target, NavigationContext context) =>
+    target == null ? null : _loadablePage(target, context);
 
 /// The `key=value` pairs between `#Intent;` and `end`.
 Map<String, String> _detailsOf(String details) {
@@ -73,11 +86,8 @@ bool _opens(String link, NavigationContext context) =>
 
 /// The fallback, decoded, when it is a web page the checkout may load.
 ///
-/// It has to be one the web view can be handed, too: a link that passes the rules but
-/// that `Uri` cannot read, such as a host with an unclosed `[`, would throw in the middle
-/// of the checkout's navigation instead of telling the payer anything. So would decoding
-/// one: a cut-off escape throws an `ArgumentError`, and an escape that is not UTF-8 a
-/// `FormatException`, so any throw means there is no page.
+/// Decoding is where this one can fail: a cut-off escape throws an `ArgumentError`, and an
+/// escape that is not UTF-8 a `FormatException`, so any throw means there is no page.
 String? _webPage(String? encoded, NavigationContext context) {
   if (encoded == null) {
     return null;
@@ -91,6 +101,15 @@ String? _webPage(String? encoded, NavigationContext context) {
     return null;
   }
 
+  return _loadablePage(page, context);
+}
+
+/// [page] when it is an ordinary web page this checkout is allowed to load.
+///
+/// It has to be one the web view can be handed, too: a link that passes the rules but that
+/// `Uri` cannot read, such as a host with an unclosed `[`, would throw in the middle of the
+/// checkout's navigation instead of telling the payer anything.
+String? _loadablePage(String page, NavigationContext context) {
   final isWebPage = _webSchemes.contains(parseUrl(page)?.scheme) &&
       Uri.tryParse(page) != null &&
       classifyNavigation(page, context) == NavigationVerdict.load;
