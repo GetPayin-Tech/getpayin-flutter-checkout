@@ -164,6 +164,14 @@ open the same `checkoutUrl` again. Create a **new** payment only after you have 
 old invoice on your server: a new payment is a new invoice, and nothing on PayLink's side
 can tell it is the same order.
 
+A retry that is declined **the same way** can come back as `cancelled` rather than as the
+decline. PayLink builds the return link from the invoice, the status and the message, none
+of which carry the time, so the second decline arrives as the same link letter for letter —
+and a link the package has already settled a checkout with is refused for ten minutes,
+because a link handed over twice would otherwise answer the next checkout with the last
+one's result. The payer sees the sheet or the browser close; the app is told `cancelled`
+with no `code`. Nothing was charged either time, and the invoice on your server says so.
+
 ## Saving the card for next time
 
 A payment can vault the card as it goes — `POST /v2/integration/init` with
