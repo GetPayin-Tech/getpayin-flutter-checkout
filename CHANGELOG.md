@@ -18,6 +18,11 @@ All notable changes to this package are documented here. The format follows
   link for another invoice is passed over and the checkout goes on waiting for its own. This
   covers `GetPayInCheckout.open`, `GetPayInCheckout.saveCard` and `GetPayInCheckoutView`;
   the payment sheet already bound to its session's invoice.
+- The payment sheet answers when the app takes away the navigator it was opened from — a
+  shell route, a tab, or a `MaterialApp` rebuilt on sign-out. Nothing pops the route then,
+  so `GetPayInPaymentSheet.show` waited for an answer that could not come and the
+  one-checkout guard stayed held for the rest of the process. It now settles the way closing
+  does: `outcomeUnknown` while a charge is out, cancelled otherwise.
 
 ## 0.2.0
 

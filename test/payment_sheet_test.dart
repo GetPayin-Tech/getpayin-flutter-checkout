@@ -1711,6 +1711,49 @@ void main() {
       expect(settled?.status, CheckoutStatus.paid);
     });
 
+    /*
+     * A sheet opened from a nested navigator — a shell route, a tab — goes with that
+     * navigator when the app leaves it, and so does a whole MaterialApp rebuilt on sign-out.
+     * Nothing pops the route then, so nothing answers it: without this, the sheet's own
+     * future stays pending and the one-checkout guard holds for the rest of the process.
+     *
+     * The app is replaced with a tree of another kind on purpose. A second MaterialApp
+     * would update the first one's element, navigator and all, and the route would survive
+     * the thing the test is about.
+     */
+    testWidgets('answers when the navigator it was in is taken away',
+        (tester) async {
+      final pending = await openSheet(
+        tester,
+        slowSavedCard(Completer<CheckoutResult>()),
+      );
+
+      CheckoutResult? settled;
+
+      unawaited(pending.then((result) => settled = result));
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+      await tester.pumpWidget(
+        const Directionality(
+          textDirection: TextDirection.ltr,
+          child: Text('signed out'),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        settled?.code,
+        CheckoutResultCode.outcomeUnknown,
+        reason: 'a charge was out, so what became of it is not known here',
+      );
+      expect(
+        GetPayInCheckout.busy,
+        isFalse,
+        reason: 'a guard still held would refuse every later payment',
+      );
+    });
+
     testWidgets('the app closing the sheet mid-charge reports it unconfirmed',
         (tester) async {
       final pending = await openSheet(
