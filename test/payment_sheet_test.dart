@@ -2436,6 +2436,41 @@ void main() {
       expect(settled?.status, CheckoutStatus.paid);
     });
 
+    testWidgets('is not opened by a touch the system takes back',
+        (tester) async {
+      final charged = <String>[];
+
+      await openSheet(
+        tester,
+        configuration(
+          savedCards: const <SavedCard>[SavedCard(id: 'pm_1', last4: '7492')],
+          chargeSavedCard: (card) async {
+            charged.add(card.id);
+
+            return const CheckoutResult(status: CheckoutStatus.paid);
+          },
+        ),
+      );
+
+      final touch = await tester.startGesture(
+        tester.getCenter(find.byType(WalletSurface)),
+      );
+
+      await touch.cancel();
+      await tester.pump();
+      await leaveTheApp(tester);
+      await pumpFrames(tester);
+
+      await tester.tap(find.text(r'Pay $97.42'));
+      await pumpFrames(tester);
+
+      expect(
+        charged,
+        <String>['pm_1'],
+        reason: 'a touch the system took back opened no wallet',
+      );
+    });
+
     testWidgets('leaves a saved card off once the hold has let go',
         (tester) async {
       final charged = <String>[];
