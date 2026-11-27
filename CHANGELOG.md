@@ -4,7 +4,12 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the package follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.1
+
+The card page, `doc/paylink-fields.html`, changed in this version. If you host it for the
+payment sheet, make a new copy with `tool/write_fields_page.dart` and upload it in place of
+the old one. An older copy still works as it did with 0.2.0, but without the two fixes below
+that live in the page: the SDK addresses, and the consent row's height.
 
 ### Added
 
